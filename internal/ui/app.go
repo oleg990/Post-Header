@@ -27,6 +27,7 @@ import (
 	"postheader/internal/config"
 	"postheader/internal/platform"
 	"postheader/internal/render"
+	"postheader/internal/spell"
 )
 
 // Version подставляется при сборке: -ldflags "-X postheader/internal/ui.Version=v1.0.0".
@@ -88,6 +89,12 @@ type App struct {
 	upd                    updater
 	welcome                welcome
 	profileBtn, myPhoneBtn Button
+	spell                  *spell.Checker
+	mistakes               []spell.Mistake
+	alignBtns              [2]Button
+	align                  int
+	slidesBtn              Button // «Разбить на слайды» из подсказки о мелком тексте
+	iconPrev, iconNext     []Button
 	zoom                   *paint.ImageOp
 	zoomBtn                widget.Clickable
 }
@@ -116,7 +123,17 @@ func Run() error {
 	a.iconList.Axis = layout.Vertical
 	a.applyConfig()
 
-	// Тяжёлая загрузка (эмодзи, шрифты) идёт, пока играет заставка.
+	// Тяжёлая загрузка (эмодзи, шрифты, словарь) идёт, пока играет заставка.
+	go func() {
+		sp, err := spell.Load(assets.SpellDic, assets.SpellAff)
+		a.post(func() {
+			if err == nil {
+				sp.AddUser(a.cfg.UserWords...)
+				a.spell = sp
+				a.recheck()
+			}
+		})
+	}()
 	go func() {
 		wk, err := newWorker(a.w.Invalidate)
 		a.post(func() {
@@ -154,6 +171,7 @@ func (a *App) applyConfig() {
 		a.bgKind = 0
 	}
 	a.count = c.Variants - 1
+	a.align = c.Align
 	a.phone.SetText(c.Phone)
 	if c.Phone == "" {
 		a.phone.SetText(c.UserPhone)
@@ -216,6 +234,7 @@ func (a *App) submit() {
 		return
 	}
 	txt := a.text.Text()
+	a.recheck()
 	a.blocks = render.Blocks(txt, a.wk.emoji)
 	for i := range a.icons {
 		if i >= len(a.blocks) {
@@ -233,6 +252,7 @@ func (a *App) submit() {
 		PhoneAt:  render.PhonePlace(a.phoneAt),
 		Brand:    render.Brand{Logo: a.logo, Address: a.cfg.Address},
 		Icons:    map[int]render.IconKind{},
+		Align:    render.Align(a.align),
 	}
 	for k, v := range a.icons {
 		o.Icons[k] = v
@@ -255,6 +275,7 @@ func (a *App) submit() {
 func (a *App) saveConfig() {
 	a.cfg.Format, a.cfg.Background, a.cfg.Overflow = a.format, a.bgKind, a.overflow
 	a.cfg.Variants, a.cfg.PhoneAt, a.cfg.Phone = a.count+1, a.phoneAt, a.phone.Text()
+	a.cfg.Align = a.align
 	a.cfg.Draft = a.text.Text()
 	go config.Save(a.cfg)
 }
@@ -424,6 +445,24 @@ func (a *App) handleInput(gtx C) {
 	pick(a.ovBtns[:], &a.overflow)
 	pick(a.cntBtns[:], &a.count)
 	pick(a.phoneAtBtns[:], &a.phoneAt)
+	pick(a.alignBtns[:], &a.align)
+	if a.slidesBtn.Clicked(gtx) && a.overflow != 1 {
+		a.overflow = 1
+		changed = true
+	}
+	for i := range a.iconPrev {
+		if i >= len(a.blocks) {
+			break
+		}
+		if a.iconPrev[i].Clicked(gtx) {
+			a.icons[i] = stepIcon(a.currentIcon(i), -1)
+			changed = true
+		}
+		if a.iconNext[i].Clicked(gtx) {
+			a.icons[i] = stepIcon(a.currentIcon(i), 1)
+			changed = true
+		}
+	}
 	for i := range a.bgBtns {
 		if !a.bgBtns[i].Clicked(gtx) {
 			continue
@@ -522,6 +561,17 @@ func (a *App) handleInput(gtx C) {
 		a.phone.SetText(a.cfg.UserPhone)
 		a.submit()
 	}
+}
+
+// stepIcon — соседняя иконка в списке (стрелки ‹ › у блока).
+func stepIcon(k render.IconKind, d int) render.IconKind {
+	n := len(render.IconChoices)
+	for i, c := range render.IconChoices {
+		if c.Kind == k {
+			return render.IconChoices[((i+d)%n+n)%n].Kind
+		}
+	}
+	return render.IconChoices[0].Kind
 }
 
 func (a *App) currentIcon(i int) render.IconKind {
@@ -685,6 +735,8 @@ func (a *App) layoutMarkup(gtx C) D { return a.markup.layout(gtx, a) }
 func (a *App) layoutIcons(gtx C) D {
 	if len(a.iconBtns) < len(a.blocks) {
 		a.iconBtns = append(a.iconBtns, make([]Button, len(a.blocks)-len(a.iconBtns))...)
+		a.iconPrev = append(a.iconPrev, make([]Button, len(a.blocks)-len(a.iconPrev))...)
+		a.iconNext = append(a.iconNext, make([]Button, len(a.blocks)-len(a.iconNext))...)
 	}
 	if len(a.blocks) == 0 {
 		return label(a.th, 13, "Блоки появятся, когда вы введёте текст. Иконка подбирается сама по эмодзи и словам.", cMuted, font.Normal).Layout(gtx)
@@ -705,10 +757,14 @@ func (a *App) layoutIcons(gtx C) D {
 					return l.Layout(gtx)
 				}),
 				layout.Rigid(layout.Spacer{Width: 8}.Layout),
+				layout.Rigid(func(gtx C) D { return a.iconPrev[i].Layout(gtx, a.th, "‹", btnChip, false) }),
+				layout.Rigid(layout.Spacer{Width: 4}.Layout),
 				layout.Rigid(func(gtx C) D {
 					_, manual := a.icons[i]
 					return a.iconBtns[i].Layout(gtx, a.th, render.IconName(a.currentIcon(i)), btnChip, manual || a.iconPick == i)
 				}),
+				layout.Rigid(layout.Spacer{Width: 4}.Layout),
+				layout.Rigid(func(gtx C) D { return a.iconNext[i].Layout(gtx, a.th, "›", btnChip, false) }),
 			)
 		}
 		return layout.Inset{Bottom: 6, Right: 6}.Layout(gtx, func(gtx C) D {
@@ -796,6 +852,12 @@ func (a *App) layoutRight(gtx C) D {
 									return segmented(gtx, a.th, a.cntBtns[:], []string{"1", "2", "3", "4"}, &a.count)
 								})
 							}),
+							layout.Rigid(layout.Spacer{Width: 28}.Layout),
+							layout.Rigid(func(gtx C) D {
+								return group(gtx, a.th, "Текст", func(gtx C) D {
+									return segmented(gtx, a.th, a.alignBtns[:], []string{"Слева", "По центру"}, &a.align)
+								})
+							}),
 						)
 					}),
 				)
@@ -807,6 +869,7 @@ func (a *App) layoutRight(gtx C) D {
 			}
 			return layout.Inset{Top: 10}.Layout(gtx, func(gtx C) D { return card(gtx, a.th, "", a.layoutPhotoAdj, false) })
 		}),
+		layout.Rigid(a.layoutLengthHint),
 		layout.Rigid(layout.Spacer{Height: 14}.Layout),
 		layout.Flexed(1, a.layoutVariants),
 		layout.Rigid(layout.Spacer{Height: 12}.Layout),
@@ -817,8 +880,8 @@ func (a *App) layoutRight(gtx C) D {
 // updatePhotoAdj — кнопки подгонки фото: сдвиг кадра, увеличение, чёткость, яркость.
 func (a *App) updatePhotoAdj(gtx C) bool {
 	adj := a.photoAdj
-	step := 0.25
-	if adj.Zoom < 1 {
+	step := 0.05
+	if adj.Zoom == 0 {
 		adj.Zoom = 1
 	}
 	clamp := func(v, lo, hi float64) float64 { return math.Max(lo, math.Min(v, hi)) }
@@ -836,9 +899,9 @@ func (a *App) updatePhotoAdj(gtx C) bool {
 		case 3:
 			adj.Y = clamp(adj.Y+step, -1, 1)
 		case 4:
-			adj.Zoom = clamp(adj.Zoom-0.25, 1, 3)
+			adj.Zoom = clamp(math.Round((adj.Zoom-0.1)*10)/10, 0.4, 3)
 		case 5:
-			adj.Zoom = clamp(adj.Zoom+0.25, 1, 3)
+			adj.Zoom = clamp(math.Round((adj.Zoom+0.1)*10)/10, 0.4, 3)
 		case 6:
 			adj.X, adj.Y, adj.Zoom = 0, 0, 1
 		}
@@ -874,18 +937,18 @@ func (a *App) layoutPhotoAdj(gtx C) D {
 		}
 	}
 	zoom := a.photoAdj.Zoom
-	if zoom < 1 {
+	if zoom == 0 {
 		zoom = 1
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
 			return layout.Flex{}.Layout(gtx,
 				layout.Rigid(func(gtx C) D {
-					return group(gtx, a.th, "Кадр фото", chips([]string{"←", "→", "↑", "↓"}, a.photoMove[0:4]))
+					return group(gtx, a.th, "Сдвиг фото", chips([]string{"←", "→", "↑", "↓"}, a.photoMove[0:4]))
 				}),
 				layout.Rigid(layout.Spacer{Width: 22}.Layout),
 				layout.Rigid(func(gtx C) D {
-					return group(gtx, a.th, fmt.Sprintf("Увеличение %.0f%%", zoom*100), chips([]string{"−", "+", "Сбросить"}, a.photoMove[4:7]))
+					return group(gtx, a.th, fmt.Sprintf("Размер фото %.0f%%", zoom*100), chips([]string{"−", "+", "Сбросить"}, a.photoMove[4:7]))
 				}),
 			)
 		}),
@@ -906,6 +969,42 @@ func (a *App) layoutPhotoAdj(gtx C) D {
 			)
 		}),
 	)
+}
+
+// layoutLengthHint предупреждает, когда текст ужат слишком мелко
+// для телефона, и предлагает разбить его на слайды.
+func (a *App) layoutLengthHint(gtx C) D {
+	if a.overflow != 0 || len(a.variants) == 0 {
+		return D{}
+	}
+	min := 0.0
+	for i, v := range a.variants {
+		if i == 0 || v.base < min {
+			min = v.base
+		}
+	}
+	if min >= 30 {
+		return D{}
+	}
+	return layout.Inset{Top: 10}.Layout(gtx, func(gtx C) D {
+		m := op.Record(gtx.Ops)
+		d := layout.Inset{Top: 10, Bottom: 10, Left: 16, Right: 10}.Layout(gtx, func(gtx C) D {
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X - gtx.Dp(26)
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+				layout.Flexed(1, label(a.th, 13, fmt.Sprintf("Текст длинный: кегль %.0f, на телефоне читать будет трудно. Сократите текст или разбейте его на слайды.", min), cGoldLight, font.Medium).Layout),
+				layout.Rigid(layout.Spacer{Width: 12}.Layout),
+				layout.Rigid(func(gtx C) D {
+					return a.slidesBtn.Layout(gtx, a.th, "Разбить на слайды", btnPrimary, false)
+				}),
+			)
+		})
+		call := m.Stop()
+		r := image.Rectangle{Max: d.Size}
+		fillRRect(gtx, r, gtx.Dp(12), alpha(cGold, 0.12))
+		strokeRRect(gtx, r, gtx.Dp(12), float32(gtx.Dp(1)), alpha(cGold, 0.6))
+		call.Add(gtx.Ops)
+		return d
+	})
 }
 
 func shorten(s string, n int) string {

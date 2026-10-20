@@ -32,13 +32,16 @@ type Style struct {
 	Cards          bool // каждый блок в тёмной карточке
 	Bar            bool // золотая вертикальная черта вместо иконки
 	Wave           bool // золотая волна внизу
+	Banner         bool // первый заголовок — крупно на золотой плашке
+	Centered       bool // текст по центру, без иконок, в рамке
+	Pattern        bool // узор из шестиугольников на фоне
 }
 
 var Styles = []Style{
 	{ID: "classic", Name: "Классика", Frame: FrameRoundSquare, Wave: true},
-	{ID: "hex", Name: "Гексагоны", Frame: FrameHexagon, StripLeadEmoji: true, Separators: true},
+	{ID: "banner", Name: "Баннер", Frame: FrameHexagon, StripLeadEmoji: true, Separators: true, Banner: true, Pattern: true},
 	{ID: "cards", Name: "Карточки", Frame: FrameHexagon, StripLeadEmoji: true, Cards: true, Wave: true},
-	{ID: "minimal", Name: "Минимал", Bar: true, Separators: true},
+	{ID: "center", Name: "Рамка", Centered: true, Separators: true},
 }
 
 type BackgroundKind int
@@ -81,13 +84,14 @@ type Options struct {
 	PhoneAt    PhonePlace
 	Brand      Brand
 	Icons      map[int]IconKind // ручной выбор иконки: номер блока (с 0) → иконка
+	Align      Align            // по центру — без иконок, каждая строка по центру
 }
 
-// PhotoAdjust — как фото ложится в кадр. Нулевое значение — по центру,
-// без увеличения, размыто и затемнено так, чтобы текст читался.
+// PhotoAdjust — как фото ложится в кадр. Нулевое значение — на весь кадр
+// по центру, размыто и затемнено так, чтобы текст читался.
 type PhotoAdjust struct {
-	X, Y  float64 // сдвиг кадра от центра, -1…1 (край фото)
-	Zoom  float64 // увеличение 1…3 (0 — как 1)
+	X, Y  float64 // сдвиг фото в долях ширины/высоты поста, -1…1
+	Zoom  float64 // масштаб 0.4…3; 1 — фото закрывает весь пост (0 — как 1)
 	Sharp int     // 0 размыто, 1 слегка размыто, 2 чётко
 	Light int     // 0 обычно, 1 светлее, 2 темнее
 }
@@ -143,7 +147,8 @@ func (r *Renderer) Render(text string, o Options) (*Result, error) {
 	avail := float64(o.Format.H) - footerH - top
 	contentW := float64(o.Format.W) - 2*margin
 
-	blocks := parseText(text, r.emoji, o.Style.StripLeadEmoji)
+	center := o.Align == AlignCenter || o.Style.Centered
+	blocks := parseText(text, r.emoji, o.Style.StripLeadEmoji && !center)
 	for i, ic := range o.Icons {
 		if i >= 0 && i < len(blocks) {
 			blocks[i].icon = ic
@@ -151,6 +156,23 @@ func (r *Renderer) Render(text string, o Options) (*Result, error) {
 	}
 	if len(blocks) == 0 {
 		return nil, errors.New("пустой текст")
+	}
+	var ban *banner
+	if o.Style.Banner {
+		var title []span
+		if blocks, title = takeBanner(blocks); title != nil {
+			ban = probe.layoutBanner(title, contentW)
+			top += ban.h + 34*k
+			avail -= ban.h + 34*k
+		}
+	}
+	framed := o.Style.Centered
+	if framed {
+		// рамка вокруг текста: поля внутри неё
+		margin += 34 * k
+		contentW -= 68 * k
+		top += 30 * k
+		avail -= 60 * k
 	}
 
 	// Если у всех блоков выбрано «без иконки», колонка иконок не нужна:
@@ -163,10 +185,10 @@ func (r *Renderer) Render(text string, o Options) (*Result, error) {
 	}
 	mk := func(s float64) metrics {
 		m := metrics{s: s, blockGap: s * 1.0}
-		if o.Style.Frame != FrameNone && anyIcon {
+		if o.Style.Frame != FrameNone && anyIcon && !center {
 			m.iconCol = s * 2.3
 			m.textW = contentW - m.iconCol - s*0.75
-		} else if o.Style.Bar {
+		} else if o.Style.Bar && !center {
 			m.textW = contentW - s*0.9
 		} else {
 			m.textW = contentW
@@ -233,7 +255,17 @@ func (r *Renderer) Render(text string, o Options) (*Result, error) {
 	for pi, page := range pages {
 		c := r.newCanvas(o)
 		r.background(c, o)
-		r.header(c, o, margin, headerBottom)
+		if o.Style.Pattern && o.Background != BgPhoto {
+			c.hexPattern(0.05 * c.pal.Glow)
+		}
+		outer := 46 * k
+		r.header(c, o, outer, headerBottom)
+		if ban != nil {
+			c.drawBanner(ban, outer, headerBottom+34*k, c.W()-2*outer)
+		}
+		if framed {
+			c.postFrame(outer+8*k, top-30*k-10*k, c.W()-outer-8*k, float64(o.Format.H)-footerH+4*k)
+		}
 		gap := m.blockGap
 		h := stackHeight(page, gap)
 		// Свободное место отдаём сначала интервалам между блоками, потом отступу сверху.
@@ -243,14 +275,20 @@ func (r *Renderer) Render(text string, o Options) (*Result, error) {
 			h += add * float64(len(page)-1)
 		}
 		y := top + math.Max(0, avail-h)*0.3
+		if center {
+			y = top + math.Max(0, avail-h)*0.5
+		}
 		for bi, b := range page {
 			if bi > 0 {
-				if o.Style.Separators {
+				switch {
+				case o.Style.Separators && center:
+					c.ornament(margin+contentW/2, y+gap/2, contentW*0.22)
+				case o.Style.Separators:
 					r.separator(c, margin, y+gap/2, contentW, m)
 				}
 				y += gap
 			}
-			r.drawBlock(c, o.Style, b, margin, y, contentW, m)
+			r.drawBlock(c, o.Style, b, margin, y, contentW, m, center)
 			y += b.h
 		}
 		r.footer(c, o, margin, footerH, pi, len(pages))
@@ -295,49 +333,85 @@ func (r *Renderer) background(c *canvas, o Options) {
 			c.polyline([]pt{{x, c.H()}, {x + c.H(), 0}}, 1*c.k, withAlpha(c.pal.Gold, 0.035))
 		}
 		c.glow(c.W()*0.5, 0, c.W()*0.9, rgb(0x5A4320), 0.25)
-	case BgPhoto:
-		if o.Photo != nil {
-			c.photoBackground(o.Photo, o.PhotoAdj)
-			break
-		}
-		fallthrough
 	default:
 		c.vGradient(b, rgb(0x0E0D0B), black)
 		c.glow(c.W()*0.5, c.H()*0.08, c.W()*0.95, rgb(0x4A3518), 0.28)
 		c.glow(c.W()*0.15, c.H()*0.7, c.W()*0.6, rgb(0x2A1E0E), 0.25)
+		// фото кладётся поверх фирменного фона: если его уменьшить или
+		// сдвинуть, по краям остаётся чёрный фон с бликами
+		if o.Background == BgPhoto && o.Photo != nil {
+			c.photoBackground(o.Photo, o.PhotoAdj)
+		}
 	}
 }
 
-// photoBackground — фото объекта на весь кадр: обрезается под формат поста
-// (с выбранным сдвигом и увеличением), размывается и затемняется, чтобы
-// золотой текст читался. Размытие = уменьшить и растянуть обратно.
+// photoBackground — фото объекта поверх фона. При масштабе 1 и без сдвига
+// фото закрывает весь пост (лишнее обрезается); меньше 1 или со сдвигом —
+// по краям виден фирменный фон, а края фото мягко растворяются.
+// Размытие = уменьшить и растянуть обратно; затемнение — чтобы читался текст.
 func (c *canvas) photoBackground(photo image.Image, adj PhotoAdjust) {
-	W, H := c.img.Bounds().Dx(), c.img.Bounds().Dy()
+	W, H := c.W(), c.H()
 	pb := photo.Bounds()
-	zoom := math.Max(1, math.Min(adj.Zoom, 3))
-	scale := math.Max(float64(W)/float64(pb.Dx()), float64(H)/float64(pb.Dy())) * zoom
-	cw, ch := int(float64(W)/scale), int(float64(H)/scale)
-	clamp := func(v float64) float64 { return math.Max(-1, math.Min(v, 1)) }
-	x0 := pb.Min.X + int(float64(pb.Dx()-cw)*(1+clamp(adj.X))/2)
-	y0 := pb.Min.Y + int(float64(pb.Dy()-ch)*(1+clamp(adj.Y))/2)
-	src := image.Rect(x0, y0, x0+cw, y0+ch)
+	zoom := adj.Zoom
+	if zoom == 0 {
+		zoom = 1
+	}
+	zoom = math.Max(0.4, math.Min(zoom, 3))
+	scale := math.Max(W/float64(pb.Dx()), H/float64(pb.Dy())) * zoom
+	pw, ph := float64(pb.Dx())*scale, float64(pb.Dy())*scale
+	px := (W-pw)/2 + math.Max(-1, math.Min(adj.X, 1))*W
+	py := (H-ph)/2 + math.Max(-1, math.Min(adj.Y, 1))*H
 
+	d := image.Rect(int(math.Max(0, px)), int(math.Max(0, py)), int(math.Min(W, px+pw)), int(math.Min(H, py+ph)))
+	if d.Empty() {
+		return
+	}
+	src := image.Rect(
+		pb.Min.X+int((float64(d.Min.X)-px)/scale), pb.Min.Y+int((float64(d.Min.Y)-py)/scale),
+		pb.Min.X+int((float64(d.Max.X)-px)/scale), pb.Min.Y+int((float64(d.Max.Y)-py)/scale))
+	if src.Empty() {
+		return
+	}
+	tmp := image.NewRGBA(image.Rect(0, 0, d.Dx(), d.Dy()))
 	div := []int{12, 5, 1}[clampInt(adj.Sharp, 0, 2)]
 	if div == 1 {
-		xdraw.ApproxBiLinear.Scale(c.img, c.img.Bounds(), photo, src, xdraw.Src, nil)
+		xdraw.ApproxBiLinear.Scale(tmp, tmp.Bounds(), photo, src, xdraw.Src, nil)
 	} else {
-		small := image.NewRGBA(image.Rect(0, 0, W/div+1, H/div+1))
+		small := image.NewRGBA(image.Rect(0, 0, d.Dx()/div+1, d.Dy()/div+1))
 		xdraw.ApproxBiLinear.Scale(small, small.Bounds(), photo, src, xdraw.Src, nil)
-		xdraw.BiLinear.Scale(c.img, c.img.Bounds(), small, small.Bounds(), xdraw.Src, nil)
+		xdraw.BiLinear.Scale(tmp, tmp.Bounds(), small, small.Bounds(), xdraw.Src, nil)
 	}
+
 	base := []float64{0.72, 0.55, 0.84}[clampInt(adj.Light, 0, 2)]
-	for y := 0; y < H; y++ {
-		t := float64(y) / float64(H)
-		a := base + 0.06 - 0.12*math.Sin(t*math.Pi) // сверху и снизу темнее
-		for x := 0; x < W; x++ {
-			i := c.img.PixOffset(x, y)
+	feather := 60 * c.k
+	edge := func(v, lo, hi float64, open0, open1 bool) float64 {
+		a := 1.0
+		if open0 {
+			a = math.Min(a, (v-lo)/feather)
+		}
+		if open1 {
+			a = math.Min(a, (hi-v)/feather)
+		}
+		return math.Max(0, math.Min(1, a))
+	}
+	left, right := px > 0.5, px+pw < W-0.5
+	topE, bottom := py > 0.5, py+ph < H-0.5
+	for y := 0; y < d.Dy(); y++ {
+		gy := float64(d.Min.Y + y)
+		t := gy / H
+		dim := base + 0.06 - 0.12*math.Sin(t*math.Pi) // сверху и снизу темнее
+		ay := edge(gy, py, py+ph, topE, bottom)
+		for x := 0; x < d.Dx(); x++ {
+			gx := float64(d.Min.X + x)
+			a := ay * edge(gx, px, px+pw, left, right)
+			if a <= 0 {
+				continue
+			}
+			si := tmp.PixOffset(x, y)
+			di := c.img.PixOffset(d.Min.X+x, d.Min.Y+y)
 			for ch := 0; ch < 3; ch++ {
-				c.img.Pix[i+ch] = uint8(float64(c.img.Pix[i+ch]) * (1 - a))
+				v := float64(tmp.Pix[si+ch]) * (1 - dim)
+				c.img.Pix[di+ch] = uint8(float64(c.img.Pix[di+ch])*(1-a) + v*a)
 			}
 		}
 	}
@@ -478,13 +552,29 @@ func (r *Renderer) separator(c *canvas, margin, y, contentW float64, m metrics) 
 
 // --- блок текста ---
 
-func (r *Renderer) drawBlock(c *canvas, st Style, b blockOut, margin, y, contentW float64, m metrics) {
+func (r *Renderer) drawBlock(c *canvas, st Style, b blockOut, margin, y, contentW float64, m metrics, center bool) {
 	s := m.s
 	x := margin
 	if st.Cards {
-		c.roundRect(margin, y, margin+contentW, y+b.h, s*0.6, withAlpha(c.pal.Gold, 0.30))
-		c.roundRect(margin+1.5*c.k, y+1.5*c.k, margin+contentW-1.5*c.k, y+b.h-1.5*c.k, s*0.55, c.pal.Card)
+		k := c.k
+		c.roundRect(margin, y, margin+contentW, y+b.h, s*0.6, withAlpha(c.pal.Gold, 0.45))
+		c.roundRect(margin+1.5*k, y+1.5*k, margin+contentW-1.5*k, y+b.h-1.5*k, s*0.55, c.pal.Card)
+		// золотая полоса слева и мягкий отблеск сверху карточки
+		c.roundRect(margin+1.5*k, y+s*0.5, margin+7*k, y+b.h-s*0.5, 3*k, c.pal.Gold)
+		c.glow(margin+contentW*0.3, y, contentW*0.4, c.pal.Gold, 0.10)
 		x += s * 0.5
+	}
+	if center {
+		if st.Cards {
+			x += s * 0.2
+		}
+		w := m.textW
+		for _, l := range b.lines {
+			l2 := l
+			l2.x = (w - lineWidth(l.spans)) / 2
+			c.drawLine(l2, x, y)
+		}
+		return
 	}
 	if m.iconCol > 0 {
 		if b.icon != IconAuto && b.icon != IconNone {

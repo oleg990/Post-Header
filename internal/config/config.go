@@ -26,6 +26,9 @@ type Config struct {
 	UserName  string `json:"user_name,omitempty"`
 	UserPhone string `json:"user_phone,omitempty"`
 	Welcomed  bool   `json:"welcomed,omitempty"`
+
+	UserWords []string `json:"user_words,omitempty"` // личный словарь для проверки орфографии
+	Align     int      `json:"align,omitempty"`      // 0 слева, 1 по центру
 }
 
 func Default() Config {

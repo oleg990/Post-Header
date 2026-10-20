@@ -16,9 +16,13 @@ import (
 // повторное нажатие возвращает как было. Ctrl+Z тоже отменяет.
 
 type markupBar struct {
-	item, num, heading, gold, block, tidy, emojiBtn Button
-	emojiOpen                                       bool
-	emojis                                          []Button
+	item, num, heading, gold, emojiBtn, spellBtn Button
+	emojiOpen, spellOpen                         bool
+	emojis                                       []Button
+
+	spWord, spAdd []Button
+	spSug         [][3]Button
+	spList        widget.List
 
 	// исходный текст строк, превращённых в заголовок: чтобы вернуть регистр
 	headingOrig map[string]string
@@ -39,26 +43,17 @@ func (m *markupBar) update(gtx C, a *App) {
 		m.toggleHeading(ed)
 	case m.gold.Clicked(gtx):
 		toggleGold(ed)
-	case m.block.Clicked(gtx):
-		if !startBlock(ed) {
-			a.notify("Здесь блок уже начинается. Поставьте курсор на строку, с которой начать новый блок", false)
-		}
-	case m.tidy.Clicked(gtx):
-		before := ed.Text()
-		after := tidy(before)
-		if after == before {
-			a.notify("Текст уже аккуратный, править нечего", false)
-		} else {
-			ed.SetCaret(0, len([]rune(before)))
-			ed.Insert(after)
-			ed.SetCaret(0, 0)
-			a.notify("Убрал лишние пробелы и пустые строки. Вернуть как было: Ctrl+Z", false)
-		}
 	default:
 		changed = false
 	}
 	if m.emojiBtn.Clicked(gtx) {
 		m.emojiOpen = !m.emojiOpen
+	}
+	if m.spellBtn.Clicked(gtx) {
+		m.spellOpen = !m.spellOpen
+	}
+	if m.updateSpell(gtx, a) {
+		changed = true
 	}
 	if len(m.emojis) < len(quickEmoji) {
 		m.emojis = make([]Button, len(quickEmoji))
@@ -92,13 +87,12 @@ func (m *markupBar) layout(gtx C, a *App) D {
 			chip(&m.item, "– Пункт", false),
 			chip(&m.num, "1. Список", false),
 			chip(&m.heading, "Заголовок", false),
-			chip(&m.gold, "Золотом", false),
 		)),
 		layout.Rigid(layout.Spacer{Height: 4}.Layout),
 		layout.Rigid(row(
-			chip(&m.block, "+ Блок", false),
+			chip(&m.gold, "Золотом", false),
 			chip(&m.emojiBtn, "Эмодзи", m.emojiOpen),
-			chip(&m.tidy, "Причесать", false),
+			chip(&m.spellBtn, spellLabel(a), m.spellOpen),
 		)),
 	}
 	if m.emojiOpen {
@@ -115,6 +109,12 @@ func (m *markupBar) layout(gtx C, a *App) D {
 			layout.Rigid(layout.Spacer{Height: 4}.Layout),
 			layout.Rigid(row(ch[:half]...)),
 			layout.Rigid(row(ch[half:]...)),
+		)
+	}
+	if m.spellOpen {
+		rows = append(rows,
+			layout.Rigid(layout.Spacer{Height: 6}.Layout),
+			layout.Rigid(func(gtx C) D { return m.layoutSpell(gtx, a) }),
 		)
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
@@ -289,43 +289,4 @@ func toggleGold(ed *widget.Editor) {
 	default:
 		replaceRange(ed, s, e, "**"+sel+"**")
 	}
-}
-
-// startBlock начинает новый блок со строки, где стоит курсор: вставляет
-// пустую строку перед ней. Текст не удаляется. false — блок уже начинается здесь.
-func startBlock(ed *widget.Editor) bool {
-	r := []rune(ed.Text())
-	s, e := selection(ed)
-	ls, _ := lineRange(r, s, s)
-	if ls == 0 || (ls >= 2 && r[ls-2] == '\n') {
-		return false
-	}
-	ed.SetCaret(ls, ls)
-	ed.Insert("\n")
-	ed.SetCaret(s+1, e+1)
-	return true
-}
-
-var (
-	spacesRe      = regexp.MustCompile(`[ \t\x{00A0}]{2,}`)
-	spaceBeforeRe = regexp.MustCompile(`[ \t\x{00A0}]+([.,!?:;)»])`)
-	spaceAfterRe  = regexp.MustCompile(`([(«])[ \t\x{00A0}]+`)
-	blankLinesRe  = regexp.MustCompile(`\n{3,}`)
-)
-
-// tidy приводит вставленный текст в порядок: лишние пробелы, пробелы
-// перед знаками препинания, пачки пустых строк.
-func tidy(s string) string {
-	s = strings.ReplaceAll(s, "\r\n", "\n")
-	lines := strings.Split(s, "\n")
-	for i, l := range lines {
-		l = strings.TrimSpace(l)
-		l = spacesRe.ReplaceAllString(l, " ")
-		l = spaceBeforeRe.ReplaceAllString(l, "$1")
-		l = spaceAfterRe.ReplaceAllString(l, "$1")
-		lines[i] = l
-	}
-	s = strings.Join(lines, "\n")
-	s = blankLinesRe.ReplaceAllString(s, "\n\n")
-	return strings.Trim(s, "\n")
 }

@@ -31,3 +31,11 @@ var NotoColorEmoji []byte
 //
 //go:embed brand/logo-adresa.png
 var LogoAdresa []byte
+
+// Русский словарь hunspell (А. Лебедев, BSD) для проверки орфографии.
+//
+//go:embed spell/ru_RU.dic.gz
+var SpellDic []byte
+
+//go:embed spell/ru_RU.aff.gz
+var SpellAff []byte

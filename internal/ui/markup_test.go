@@ -13,27 +13,6 @@ func edWith(text string, s, e int) *widget.Editor {
 	return ed
 }
 
-func TestTidy(t *testing.T) {
-	in := "  Эксклюзивное  предложение .\n\n\n\nконсультация ( бесплатно ) , да !  \n"
-	want := "Эксклюзивное предложение.\n\nконсультация (бесплатно), да!"
-	if got := tidy(in); got != want {
-		t.Errorf("tidy = %q, want %q", got, want)
-	}
-}
-
-func TestStartBlockKeepsText(t *testing.T) {
-	ed := edWith("раз\nдва\nтри", 4, 7) // выделено «два»
-	if !startBlock(ed) {
-		t.Fatal("блок не начался")
-	}
-	if got := ed.Text(); got != "раз\n\nдва\nтри" {
-		t.Errorf("text = %q", got)
-	}
-	if startBlock(ed) {
-		t.Error("второй раз блок начинаться не должен")
-	}
-}
-
 func TestHeadingToggle(t *testing.T) {
 	var m markupBar
 	ed := edWith("Приятный бонус!\nтекст", 3, 3)
