@@ -45,7 +45,7 @@ GOOS=windows go build -ldflags "-H windowsgui" -o PostHeader.exe ./cmd/postheade
 
 ## Установка и обновления
 
-Коллегам достаточно скачать `PostHeader-Setup-vX.Y.Z.exe` со страницы
+Коллегам достаточно скачать установщик по постоянной ссылке https://github.com/oleg990/Post-Header/releases/latest/download/PostHeader-Setup.exe (всегда последняя версия) или со страницы
 [Releases](https://github.com/oleg990/Post-Header/releases/latest) и запустить:
 права администратора не нужны, программа ставится в профиль пользователя,
 появляются ярлыки в «Пуске» и на рабочем столе. 64-битная сборка ставится

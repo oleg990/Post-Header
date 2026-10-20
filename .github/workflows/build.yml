@@ -80,6 +80,8 @@ jobs:
         run: |
           V="${{ needs.build.outputs.version }}"; V="${V#v}"
           MSYS2_ARG_CONV_EXCL="*" "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DAppVersion=$V" installer/PostHeader.iss
+          # копия с постоянным именем: ссылка .../releases/latest/download/PostHeader-Setup.exe всегда ведёт на свежую версию
+          cp "dist/PostHeader-Setup-v$V.exe" dist/PostHeader-Setup.exe
           ls -la dist
 
       - uses: actions/upload-artifact@v4
