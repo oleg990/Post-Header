@@ -9,6 +9,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.v }}
+      release: ${{ steps.ver.outputs.release }}
     steps:
       - uses: actions/checkout@v4
 
@@ -19,9 +22,19 @@ jobs:
 
       - name: Версия
         id: ver
+        # Релиз выходит сам, когда в main меняется файл VERSION
+        # (или пушится тег v*): если тега vX ещё нет, он создаётся вместе с релизом.
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF#refs/tags/}"; else V="dev-${GITHUB_SHA::7}"; fi
+          V="dev-${GITHUB_SHA::7}"; R=false
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            V="${GITHUB_REF#refs/tags/}"; R=true
+          elif [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_EVENT_NAME" == push ]]; then
+            T="v$(tr -d ' \r\n' < VERSION)"
+            if [[ -z "$(git ls-remote --tags origin "refs/tags/$T")" ]]; then V="$T"; R=true; fi
+          fi
           echo "v=$V" >> "$GITHUB_OUTPUT"
+          echo "release=$R" >> "$GITHUB_OUTPUT"
+          echo "Версия: $V, релиз: $R"
 
       - name: Vet and test
         run: |
@@ -63,7 +76,7 @@ jobs:
       - name: Сборка установщика
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF#refs/tags/v}"; else V="dev-${GITHUB_SHA::7}"; fi
+          V="${{ needs.build.outputs.version }}"; V="${V#v}"
           MSYS2_ARG_CONV_EXCL="*" "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DAppVersion=$V" installer/PostHeader.iss
           ls -la dist
 
@@ -73,7 +86,10 @@ jobs:
           path: dist/PostHeader-Setup-*.exe
 
       - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: needs.build.outputs.release == 'true'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.build.outputs.version }}
+          name: Post Header ${{ needs.build.outputs.version }}
+          target_commitish: ${{ github.sha }}
           files: dist/*.exe
