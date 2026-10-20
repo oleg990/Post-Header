@@ -75,11 +75,21 @@ type Options struct {
 	Style      Style
 	Background BackgroundKind
 	Photo      image.Image // для BgPhoto
+	PhotoAdj   PhotoAdjust
 	Overflow   Overflow
 	Phone      string
 	PhoneAt    PhonePlace
 	Brand      Brand
 	Icons      map[int]IconKind // ручной выбор иконки: номер блока (с 0) → иконка
+}
+
+// PhotoAdjust — как фото ложится в кадр. Нулевое значение — по центру,
+// без увеличения, размыто и затемнено так, чтобы текст читался.
+type PhotoAdjust struct {
+	X, Y  float64 // сдвиг кадра от центра, -1…1 (край фото)
+	Zoom  float64 // увеличение 1…3 (0 — как 1)
+	Sharp int     // 0 размыто, 1 слегка размыто, 2 чётко
+	Light int     // 0 обычно, 1 светлее, 2 темнее
 }
 
 // Result — готовые слайды и пометка, если «ужать» не хватило и текст разбит.
@@ -143,9 +153,17 @@ func (r *Renderer) Render(text string, o Options) (*Result, error) {
 		return nil, errors.New("пустой текст")
 	}
 
+	// Если у всех блоков выбрано «без иконки», колонка иконок не нужна:
+	// текст встаёт на всю ширину.
+	anyIcon := false
+	for _, b := range blocks {
+		if b.icon != IconNone {
+			anyIcon = true
+		}
+	}
 	mk := func(s float64) metrics {
 		m := metrics{s: s, blockGap: s * 1.0}
-		if o.Style.Frame != FrameNone {
+		if o.Style.Frame != FrameNone && anyIcon {
 			m.iconCol = s * 2.3
 			m.textW = contentW - m.iconCol - s*0.75
 		} else if o.Style.Bar {
@@ -279,7 +297,7 @@ func (r *Renderer) background(c *canvas, o Options) {
 		c.glow(c.W()*0.5, 0, c.W()*0.9, rgb(0x5A4320), 0.25)
 	case BgPhoto:
 		if o.Photo != nil {
-			c.photoBackground(o.Photo)
+			c.photoBackground(o.Photo, o.PhotoAdj)
 			break
 		}
 		fallthrough
@@ -290,21 +308,32 @@ func (r *Renderer) background(c *canvas, o Options) {
 	}
 }
 
-// photoBackground — фото объекта на весь кадр, размытое и затемнённое,
-// чтобы золотой текст читался. Размытие = уменьшить в 12 раз и растянуть обратно.
-func (c *canvas) photoBackground(photo image.Image) {
+// photoBackground — фото объекта на весь кадр: обрезается под формат поста
+// (с выбранным сдвигом и увеличением), размывается и затемняется, чтобы
+// золотой текст читался. Размытие = уменьшить и растянуть обратно.
+func (c *canvas) photoBackground(photo image.Image, adj PhotoAdjust) {
 	W, H := c.img.Bounds().Dx(), c.img.Bounds().Dy()
 	pb := photo.Bounds()
-	scale := math.Max(float64(W)/float64(pb.Dx()), float64(H)/float64(pb.Dy()))
+	zoom := math.Max(1, math.Min(adj.Zoom, 3))
+	scale := math.Max(float64(W)/float64(pb.Dx()), float64(H)/float64(pb.Dy())) * zoom
 	cw, ch := int(float64(W)/scale), int(float64(H)/scale)
-	src := image.Rect(pb.Min.X+(pb.Dx()-cw)/2, pb.Min.Y+(pb.Dy()-ch)/2, 0, 0)
-	src.Max = src.Min.Add(image.Pt(cw, ch))
-	small := image.NewRGBA(image.Rect(0, 0, W/12+1, H/12+1))
-	xdraw.ApproxBiLinear.Scale(small, small.Bounds(), photo, src, xdraw.Src, nil)
-	xdraw.BiLinear.Scale(c.img, c.img.Bounds(), small, small.Bounds(), xdraw.Src, nil)
+	clamp := func(v float64) float64 { return math.Max(-1, math.Min(v, 1)) }
+	x0 := pb.Min.X + int(float64(pb.Dx()-cw)*(1+clamp(adj.X))/2)
+	y0 := pb.Min.Y + int(float64(pb.Dy()-ch)*(1+clamp(adj.Y))/2)
+	src := image.Rect(x0, y0, x0+cw, y0+ch)
+
+	div := []int{12, 5, 1}[clampInt(adj.Sharp, 0, 2)]
+	if div == 1 {
+		xdraw.ApproxBiLinear.Scale(c.img, c.img.Bounds(), photo, src, xdraw.Src, nil)
+	} else {
+		small := image.NewRGBA(image.Rect(0, 0, W/div+1, H/div+1))
+		xdraw.ApproxBiLinear.Scale(small, small.Bounds(), photo, src, xdraw.Src, nil)
+		xdraw.BiLinear.Scale(c.img, c.img.Bounds(), small, small.Bounds(), xdraw.Src, nil)
+	}
+	base := []float64{0.72, 0.55, 0.84}[clampInt(adj.Light, 0, 2)]
 	for y := 0; y < H; y++ {
 		t := float64(y) / float64(H)
-		a := 0.78 - 0.12*math.Sin(t*math.Pi) // сверху и снизу темнее
+		a := base + 0.06 - 0.12*math.Sin(t*math.Pi) // сверху и снизу темнее
 		for x := 0; x < W; x++ {
 			i := c.img.PixOffset(x, y)
 			for ch := 0; ch < 3; ch++ {
@@ -312,6 +341,16 @@ func (c *canvas) photoBackground(photo image.Image) {
 			}
 		}
 	}
+}
+
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 // --- шапка ---
@@ -448,7 +487,7 @@ func (r *Renderer) drawBlock(c *canvas, st Style, b blockOut, margin, y, content
 		x += s * 0.5
 	}
 	if m.iconCol > 0 {
-		if b.icon != IconAuto {
+		if b.icon != IconAuto && b.icon != IconNone {
 			iy := y + (s * 0.15)
 			if st.Cards {
 				iy = y + s*0.6

@@ -21,6 +21,7 @@ const (
 	IconShield
 	IconHouse
 	IconPin
+	IconNone // блок без иконки (текст остаётся на своём месте)
 )
 
 // IconChoices — список для выбора иконки вручную в интерфейсе.
@@ -37,6 +38,7 @@ var IconChoices = []struct {
 	{IconShield, "shield", "Щит"},
 	{IconHouse, "house", "Дом"},
 	{IconPin, "pin", "Метка"},
+	{IconNone, "none", "Без иконки"},
 }
 
 type IconFrame int

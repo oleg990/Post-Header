@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"image"
 	"image/jpeg"
 	_ "image/png"
@@ -58,11 +59,17 @@ type App struct {
 
 	photo     image.Image
 	photoName string
+	photoAdj  render.PhotoAdjust
+	photoMove [7]Button // ← → ↑ ↓ − + по центру
+	sharpBtns [3]Button
+	lightBtns [3]Button
 	logo      image.Image
 
 	blocks   []render.BlockSummary
 	icons    map[int]render.IconKind
 	iconBtns []Button
+	iconPick int // блок, у которого открыт выбор иконки (-1 — ни у какого)
+	pickBtns []Button
 	iconList widget.List
 
 	gen       int
@@ -96,7 +103,7 @@ type variantCard struct {
 
 // Run открывает окно и крутит цикл событий до закрытия.
 func Run() error {
-	a := &App{cfg: config.Load(), ui: make(chan func(), 16), icons: map[int]render.IconKind{}}
+	a := &App{cfg: config.Load(), ui: make(chan func(), 16), icons: map[int]render.IconKind{}, iconPick: -1}
 	a.w = new(app.Window)
 	a.w.Option(app.Title("Post Header"), app.Size(1360, 860), app.MinSize(1200, 760), app.Maximized.Option())
 	var err error
@@ -188,6 +195,7 @@ func (a *App) loadPhoto(path string) {
 		return
 	}
 	a.photo, a.photoName, a.bgKind = img, filepath.Base(path), 3
+	a.photoAdj = render.PhotoAdjust{}
 	a.submit()
 }
 
@@ -235,7 +243,7 @@ func (a *App) submit() {
 	case 2:
 		o.Background = render.BgGraphite
 	case 3:
-		o.Background, o.Photo = render.BgPhoto, a.photo
+		o.Background, o.Photo, o.PhotoAdj = render.BgPhoto, a.photo, a.photoAdj
 	}
 	a.gen++
 	a.rendering = true
@@ -400,6 +408,7 @@ func (a *App) handleInput(gtx C) {
 	if a.clearBtn.Clicked(gtx) {
 		a.text.SetText("")
 		a.icons = map[int]render.IconKind{}
+		a.iconPick = -1
 		a.submit()
 	}
 	changed := false
@@ -439,9 +448,25 @@ func (a *App) handleInput(gtx C) {
 	}
 	for i := range a.iconBtns {
 		if i < len(a.blocks) && a.iconBtns[i].Clicked(gtx) {
-			a.icons[i] = nextIcon(a.currentIcon(i))
+			if a.iconPick == i {
+				a.iconPick = -1
+			} else {
+				a.iconPick = i
+			}
+		}
+	}
+	if len(a.pickBtns) < len(render.IconChoices) {
+		a.pickBtns = make([]Button, len(render.IconChoices))
+	}
+	for j, ch := range render.IconChoices {
+		if a.pickBtns[j].Clicked(gtx) && a.iconPick >= 0 && a.iconPick < len(a.blocks) {
+			a.icons[a.iconPick] = ch.Kind
+			a.iconPick = -1
 			changed = true
 		}
+	}
+	if a.updatePhotoAdj(gtx) {
+		changed = true
 	}
 	if changed {
 		a.submit()
@@ -506,14 +531,6 @@ func (a *App) currentIcon(i int) render.IconKind {
 	return a.blocks[i].Icon
 }
 
-func nextIcon(k render.IconKind) render.IconKind {
-	for i, c := range render.IconChoices {
-		if c.Kind == k {
-			return render.IconChoices[(i+1)%len(render.IconChoices)].Kind
-		}
-	}
-	return render.IconChoices[0].Kind
-}
 
 func (a *App) outDir() string {
 	if a.cfg.OutDir != "" {
@@ -674,7 +691,7 @@ func (a *App) layoutIcons(gtx C) D {
 		return label(a.th, 13, "Блоки появятся, когда вы введёте текст. Иконка подбирается сама по эмодзи и словам.", cMuted, font.Normal).Layout(gtx)
 	}
 	return material.List(a.th, &a.iconList).Layout(gtx, len(a.blocks), func(gtx C, i int) D {
-		return layout.Inset{Bottom: 6, Right: 6}.Layout(gtx, func(gtx C) D {
+		row := func(gtx C) D {
 			return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx C) D {
 					s := gtx.Dp(24)
@@ -691,11 +708,47 @@ func (a *App) layoutIcons(gtx C) D {
 				layout.Rigid(layout.Spacer{Width: 8}.Layout),
 				layout.Rigid(func(gtx C) D {
 					_, manual := a.icons[i]
-					return a.iconBtns[i].Layout(gtx, a.th, render.IconName(a.currentIcon(i)), btnChip, manual)
+					return a.iconBtns[i].Layout(gtx, a.th, render.IconName(a.currentIcon(i)), btnChip, manual || a.iconPick == i)
 				}),
+			)
+		}
+		return layout.Inset{Bottom: 6, Right: 6}.Layout(gtx, func(gtx C) D {
+			if a.iconPick != i {
+				return row(gtx)
+			}
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(row),
+				layout.Rigid(func(gtx C) D { return layout.Inset{Top: 6, Left: 34}.Layout(gtx, a.layoutIconPicker) }),
 			)
 		})
 	})
+}
+
+// layoutIconPicker — все варианты иконки в три ряда, текущий подсвечен.
+func (a *App) layoutIconPicker(gtx C) D {
+	cur := a.currentIcon(a.iconPick)
+	var rows []layout.FlexChild
+	for start := 0; start < len(render.IconChoices); start += 3 {
+		start := start
+		rows = append(rows, layout.Rigid(func(gtx C) D {
+			var ch []layout.FlexChild
+			for j := start; j < start+3; j++ {
+				j := j
+				ch = append(ch, layout.Flexed(1, func(gtx C) D {
+					if j >= len(render.IconChoices) {
+						return D{}
+					}
+					return layout.Inset{Right: 4, Bottom: 4}.Layout(gtx, func(gtx C) D {
+						gtx.Constraints.Min.X = gtx.Constraints.Max.X
+						c := render.IconChoices[j]
+						return a.pickBtns[j].Layout(gtx, a.th, c.Name, btnChip, c.Kind == cur)
+					})
+				}))
+			}
+			return layout.Flex{}.Layout(gtx, ch...)
+		}))
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
 }
 
 func group(gtx C, th *material.Theme, title string, w layout.Widget) D {
@@ -749,10 +802,110 @@ func (a *App) layoutRight(gtx C) D {
 				)
 			}, false)
 		}),
+		layout.Rigid(func(gtx C) D {
+			if a.bgKind != 3 || a.photo == nil {
+				return D{}
+			}
+			return layout.Inset{Top: 10}.Layout(gtx, func(gtx C) D { return card(gtx, a.th, "", a.layoutPhotoAdj, false) })
+		}),
 		layout.Rigid(layout.Spacer{Height: 14}.Layout),
 		layout.Flexed(1, a.layoutVariants),
 		layout.Rigid(layout.Spacer{Height: 12}.Layout),
 		layout.Rigid(a.layoutActions),
+	)
+}
+
+// updatePhotoAdj — кнопки подгонки фото: сдвиг кадра, увеличение, чёткость, яркость.
+func (a *App) updatePhotoAdj(gtx C) bool {
+	adj := a.photoAdj
+	step := 0.25
+	if adj.Zoom < 1 {
+		adj.Zoom = 1
+	}
+	clamp := func(v, lo, hi float64) float64 { return math.Max(lo, math.Min(v, hi)) }
+	for i := range a.photoMove {
+		if !a.photoMove[i].Clicked(gtx) {
+			continue
+		}
+		switch i {
+		case 0:
+			adj.X = clamp(adj.X-step, -1, 1)
+		case 1:
+			adj.X = clamp(adj.X+step, -1, 1)
+		case 2:
+			adj.Y = clamp(adj.Y-step, -1, 1)
+		case 3:
+			adj.Y = clamp(adj.Y+step, -1, 1)
+		case 4:
+			adj.Zoom = clamp(adj.Zoom-0.25, 1, 3)
+		case 5:
+			adj.Zoom = clamp(adj.Zoom+0.25, 1, 3)
+		case 6:
+			adj.X, adj.Y, adj.Zoom = 0, 0, 1
+		}
+	}
+	for i := range a.sharpBtns {
+		if a.sharpBtns[i].Clicked(gtx) {
+			adj.Sharp = i
+		}
+	}
+	for i := range a.lightBtns {
+		if a.lightBtns[i].Clicked(gtx) {
+			adj.Light = i
+		}
+	}
+	if adj == a.photoAdj {
+		return false
+	}
+	a.photoAdj = adj
+	return true
+}
+
+func (a *App) layoutPhotoAdj(gtx C) D {
+	chips := func(labels []string, btns []Button) layout.Widget {
+		return func(gtx C) D {
+			var ch []layout.FlexChild
+			for i := range labels {
+				i := i
+				ch = append(ch, layout.Rigid(func(gtx C) D {
+					return layout.Inset{Right: 6}.Layout(gtx, func(gtx C) D { return btns[i].Layout(gtx, a.th, labels[i], btnChip, false) })
+				}))
+			}
+			return layout.Flex{Alignment: layout.Middle}.Layout(gtx, ch...)
+		}
+	}
+	zoom := a.photoAdj.Zoom
+	if zoom < 1 {
+		zoom = 1
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx C) D {
+			return layout.Flex{}.Layout(gtx,
+				layout.Rigid(func(gtx C) D {
+					return group(gtx, a.th, "Кадр фото", chips([]string{"←", "→", "↑", "↓"}, a.photoMove[0:4]))
+				}),
+				layout.Rigid(layout.Spacer{Width: 22}.Layout),
+				layout.Rigid(func(gtx C) D {
+					return group(gtx, a.th, fmt.Sprintf("Увеличение %.0f%%", zoom*100), chips([]string{"−", "+", "Сбросить"}, a.photoMove[4:7]))
+				}),
+			)
+		}),
+		layout.Rigid(layout.Spacer{Height: 12}.Layout),
+		layout.Rigid(func(gtx C) D {
+			return layout.Flex{}.Layout(gtx,
+				layout.Rigid(func(gtx C) D {
+					return group(gtx, a.th, "Чёткость", func(gtx C) D {
+						return segmented(gtx, a.th, a.sharpBtns[:], []string{"Размыто", "Слегка", "Чётко"}, &a.photoAdj.Sharp)
+					})
+				}),
+				layout.Rigid(layout.Spacer{Width: 22}.Layout),
+				layout.Rigid(func(gtx C) D {
+					return group(gtx, a.th, "Яркость фото", func(gtx C) D {
+						return segmented(gtx, a.th, a.lightBtns[:], []string{"Обычно", "Светлее", "Темнее"}, &a.photoAdj.Light)
+					})
+				}),
+			)
+		}),
 	)
 }
 
