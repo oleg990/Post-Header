@@ -98,7 +98,7 @@ type variantCard struct {
 func Run() error {
 	a := &App{cfg: config.Load(), ui: make(chan func(), 16), icons: map[int]render.IconKind{}}
 	a.w = new(app.Window)
-	a.w.Option(app.Title("Post Header"), app.Size(1360, 860), app.MinSize(1200, 760))
+	a.w.Option(app.Title("Post Header"), app.Size(1360, 860), app.MinSize(1200, 760), app.Maximized.Option())
 	var err error
 	if a.th, err = newTheme(); err != nil {
 		return err
@@ -610,7 +610,7 @@ func (a *App) layoutLeft(gtx C) D {
 					layout.Flexed(1, func(gtx C) D {
 						return fieldFrame(gtx, gtx.Focused(&a.text), &a.textFocus, func(gtx C) D {
 							gtx.Constraints.Min = gtx.Constraints.Max
-							return editorStyle(a.th, &a.text, "Напишите или вставьте текст поста…\n\nПустая строка — новый блок.\n«- » в начале строки — пункт списка с золотым тире.\nСтрока ПРОПИСНЫМИ — золотой заголовок.\n**слово** — золотое выделение.").Layout(gtx)
+							return editorStyle(a.th, &a.text, "Напишите или вставьте текст поста…\n\nПустая строка — новый блок.\n«- » в начале строки — пункт с золотым тире, «1. » — нумерованный пункт.\nСтрока ПРОПИСНЫМИ — золотой заголовок.\n**слово** — золотое выделение.").Layout(gtx)
 						})
 					}),
 					layout.Rigid(layout.Spacer{Height: 8}.Layout),
@@ -664,23 +664,7 @@ func (a *App) layoutLeft(gtx C) D {
 }
 
 // layoutMarkup — ряд кнопок разметки под полем текста.
-func (a *App) layoutMarkup(gtx C) D {
-	m := &a.markup
-	chip := func(b *Button, txt string) layout.FlexChild {
-		return layout.Flexed(1, func(gtx C) D {
-			return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D {
-				gtx.Constraints.Min.X = gtx.Constraints.Max.X
-				return b.Layout(gtx, a.th, txt, btnChip, false)
-			})
-		})
-	}
-	return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-		chip(&m.item, "– Пункт"),
-		chip(&m.heading, "Заголовок"),
-		chip(&m.gold, "Золотом"),
-		chip(&m.block, "+ Блок"),
-	)
-}
+func (a *App) layoutMarkup(gtx C) D { return a.markup.layout(gtx, a) }
 
 func (a *App) layoutIcons(gtx C) D {
 	if len(a.iconBtns) < len(a.blocks) {

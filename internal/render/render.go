@@ -472,8 +472,13 @@ func (c *canvas) drawLine(l lineOut, x0, y0 float64) {
 	top := y0 + l.y
 	base := top + l.h/2 + l.size*0.36
 	x := x0 + l.x
-	if l.marker {
+	switch {
+	case l.mark == "–":
 		c.text("–", x0+l.x-l.size*0.85, base, Bold, l.size, c.pal.Gold)
+	case l.mark != "":
+		// номер прижат вправо к тексту пункта, чтобы «9.» и «10.» стояли ровно
+		w := c.textWidth(l.mark, Bold, l.size)
+		c.text(l.mark, x0+l.x-l.size*0.28-w, base, Bold, l.size, c.pal.Gold)
 	}
 	for _, sp := range l.spans {
 		switch sp.kind {

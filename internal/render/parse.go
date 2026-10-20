@@ -40,6 +40,7 @@ const (
 
 type para struct {
 	kind  paraKind
+	num   string // «1.» у нумерованного пункта; пусто — пункт с тире
 	spans []span
 }
 
@@ -47,6 +48,9 @@ type block struct {
 	icon  IconKind
 	paras []para
 }
+
+// numRe — нумерованный пункт: «1. текст» или «2) текст».
+var numRe = regexp.MustCompile(`^(\d{1,2})[.)]\s+(\S.*)$`)
 
 var accentRe = regexp.MustCompile(`^\d[\d.,]*(%|р|₽|руб)\.?[.,!)]*$`)
 
@@ -65,9 +69,11 @@ func parseText(text string, es *EmojiSet, stripLeadEmoji bool) []block {
 			blocks = append(blocks, block{icon: IconAuto})
 			cur = &blocks[len(blocks)-1]
 		}
-		kind := pText
+		kind, num := pText, ""
 		if rest, ok := cutDash(line); ok {
 			kind, line = pDash, rest
+		} else if m := numRe.FindStringSubmatch(line); m != nil {
+			kind, num, line = pDash, m[1]+".", m[2]
 		} else if (prevKind == pDash || prevKind == pDashCont) && strings.HasPrefix(line, "(") {
 			kind = pDashCont
 		} else if isHeading(line, len(cur.paras) == 0) {
@@ -81,7 +87,7 @@ func parseText(text string, es *EmojiSet, stripLeadEmoji bool) []block {
 				spans = trimLeftSpaces(spans[1:])
 			}
 		}
-		cur.paras = append(cur.paras, para{kind: kind, spans: spans})
+		cur.paras = append(cur.paras, para{kind: kind, num: num, spans: spans})
 		prevKind = kind
 	}
 	for i := range blocks {

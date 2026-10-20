@@ -7,7 +7,7 @@ type lineOut struct {
 	size    float64
 	weight  Weight
 	heading bool
-	marker  bool // золотое тире перед пунктом
+	mark    string // золотое «–» или номер «1.» перед пунктом
 	spans   []span
 }
 
@@ -40,6 +40,9 @@ func (c *canvas) layoutBlocks(blocks []block, m metrics) []blockOut {
 				}
 			case pDash, pDashCont:
 				indent = s * 0.95
+				if p.num != "" {
+					indent = s * 1.35 // место под «10.»
+				}
 			}
 			lines := c.wrap(p.spans, m.textW-indent, size, weight)
 			for li, l := range lines {
@@ -47,7 +50,7 @@ func (c *canvas) layoutBlocks(blocks []block, m metrics) []blockOut {
 				bo.lines = append(bo.lines, lineOut{
 					x: indent, y: y, h: h, size: size, weight: weight,
 					heading: p.kind == pHeading,
-					marker:  p.kind == pDash && li == 0,
+					mark:    markFor(p, li),
 					spans:   l,
 				})
 				y += h
@@ -60,6 +63,17 @@ func (c *canvas) layoutBlocks(blocks []block, m metrics) []blockOut {
 		out = append(out, bo)
 	}
 	return out
+}
+
+func markFor(p para, li int) string {
+	switch {
+	case p.kind != pDash || li > 0:
+		return ""
+	case p.num != "":
+		return p.num
+	default:
+		return "–"
+	}
 }
 
 func stackHeight(bs []blockOut, gap float64) float64 {
