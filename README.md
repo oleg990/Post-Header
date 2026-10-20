@@ -24,3 +24,17 @@ go run ./cmd/postheader-cli -in examples/post1.txt -logo examples/logo-adresa.jp
 - `cmd/postheader-cli` — консольная обёртка
 
 Совместимость: код держим в рамках Go 1.20 (последний с официальной поддержкой Windows 7).
+
+## Окно программы
+
+`cmd/postheader` — десктоп-приложение на Gio (`internal/ui`): заставка, редактор с цветными эмодзи, живое превью вариантов, сохранение и копирование в буфер, настройки (логотип, адрес, шрифт). Настройки и черновик хранятся в `%APPDATA%\PostHeader\config.json`, готовые посты — в `Изображения\PostHeader`.
+
+Сборка для Windows (без консольного окна):
+
+```
+GOOS=windows go build -ldflags "-H windowsgui" -o PostHeader.exe ./cmd/postheader
+```
+
+Готовые .exe (64 и 32 бита) собирает GitHub Actions на Go 1.20.14 — артефакт `postheader-windows`, а по тегу `v*` — релиз.
+
+Для разработки на Linux окно собирается с Go ≤ 1.23 (cgo-ограничение Go 1.24 в Gio 0.6) и пакетами `libwayland-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libx11-xcb-dev libxcursor-dev libxfixes-dev libvulkan-dev`.

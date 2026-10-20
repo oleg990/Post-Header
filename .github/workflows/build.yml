@@ -17,16 +17,28 @@ jobs:
         with:
           go-version: "1.20.14"
 
+      - name: Версия
+        id: ver
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF#refs/tags/}"; else V="dev-${GITHUB_SHA::7}"; fi
+          echo "v=$V" >> "$GITHUB_OUTPUT"
+
       - name: Vet and test
         run: |
-          go vet ./...
-          go test ./...
+          GOOS=windows go vet ./...
+          go vet ./internal/render ./internal/config ./internal/fontscan ./internal/platform ./cmd/postheader-cli
+          go test ./internal/render/...
 
       - name: Build Windows exe (64 и 32 бита)
         run: |
           mkdir -p dist
-          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/postheader-cli-win64.exe ./cmd/postheader-cli
-          GOOS=windows GOARCH=386   go build -trimpath -ldflags="-s -w" -o dist/postheader-cli-win32.exe ./cmd/postheader-cli
+          LDF="-s -w -X postheader/internal/ui.Version=${{ steps.ver.outputs.v }}"
+          for A in amd64:win64 386:win32; do
+            GOARCH=${A%%:*}; N=${A##*:}
+            GOOS=windows GOARCH=$GOARCH go build -trimpath -ldflags="$LDF -H windowsgui" -o dist/PostHeader-$N.exe ./cmd/postheader
+            GOOS=windows GOARCH=$GOARCH go build -trimpath -ldflags="$LDF" -o dist/postheader-cli-$N.exe ./cmd/postheader-cli
+          done
+          ls -la dist
 
       - uses: actions/upload-artifact@v4
         with:

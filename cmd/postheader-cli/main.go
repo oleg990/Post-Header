@@ -79,7 +79,7 @@ func main() {
 		img, err := loadImage(*logo)
 		check(err)
 		if strings.HasSuffix(strings.ToLower(*logo), ".jpg") || strings.HasSuffix(strings.ToLower(*logo), ".jpeg") {
-			img = trim(render.KeyDarkBackground(img, 45, 110))
+			img = render.TrimTransparent(render.KeyDarkBackground(img, 45, 110))
 		}
 		o.Brand.Logo = img
 	}
@@ -171,34 +171,6 @@ func loadImage(path string) (image.Image, error) {
 	defer f.Close()
 	img, _, err := image.Decode(f)
 	return img, err
-}
-
-// trim обрезает прозрачные поля вокруг логотипа.
-func trim(img *image.NRGBA) image.Image {
-	b := img.Bounds()
-	minX, minY, maxX, maxY := b.Max.X, b.Max.Y, b.Min.X, b.Min.Y
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		for x := b.Min.X; x < b.Max.X; x++ {
-			if img.NRGBAAt(x, y).A > 40 {
-				if x < minX {
-					minX = x
-				}
-				if x > maxX {
-					maxX = x
-				}
-				if y < minY {
-					minY = y
-				}
-				if y > maxY {
-					maxY = y
-				}
-			}
-		}
-	}
-	if maxX < minX {
-		return img
-	}
-	return img.SubImage(image.Rect(minX, minY, maxX+1, maxY+1))
 }
 
 func saveJPEG(path string, img image.Image, q int) error {

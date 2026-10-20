@@ -35,10 +35,10 @@ type Style struct {
 }
 
 var Styles = []Style{
-	{ID: "classic", Name: "Классика: квадратные иконки", Frame: FrameRoundSquare, Wave: true},
-	{ID: "hex", Name: "Гексагоны и разделители", Frame: FrameHexagon, StripLeadEmoji: true, Separators: true},
+	{ID: "classic", Name: "Классика", Frame: FrameRoundSquare, Wave: true},
+	{ID: "hex", Name: "Гексагоны", Frame: FrameHexagon, StripLeadEmoji: true, Separators: true},
 	{ID: "cards", Name: "Карточки", Frame: FrameHexagon, StripLeadEmoji: true, Cards: true, Wave: true},
-	{ID: "minimal", Name: "Минимал: золотая черта", Bar: true, Separators: true},
+	{ID: "minimal", Name: "Минимал", Bar: true, Separators: true},
 }
 
 type BackgroundKind int
@@ -561,4 +561,32 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+// TrimTransparent обрезает прозрачные поля вокруг логотипа.
+func TrimTransparent(img *image.NRGBA) image.Image {
+	b := img.Bounds()
+	minX, minY, maxX, maxY := b.Max.X, b.Max.Y, b.Min.X-1, b.Min.Y-1
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if img.NRGBAAt(x, y).A > 40 {
+				if x < minX {
+					minX = x
+				}
+				if x > maxX {
+					maxX = x
+				}
+				if y < minY {
+					minY = y
+				}
+				if y > maxY {
+					maxY = y
+				}
+			}
+		}
+	}
+	if maxX < minX {
+		return img
+	}
+	return img.SubImage(image.Rect(minX, minY, maxX+1, maxY+1))
 }

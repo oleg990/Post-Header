@@ -178,3 +178,41 @@ func blockText(b block) string {
 	}
 	return strings.ToLower(sb.String())
 }
+
+// BlockSummary — блок поста для списка «Иконки блоков» в интерфейсе.
+type BlockSummary struct {
+	Title string   // первые слова блока
+	Icon  IconKind // иконка, выбранная автоматически
+}
+
+// Blocks разбирает текст так же, как рендер, и возвращает блоки по порядку.
+func Blocks(text string, es *EmojiSet) []BlockSummary {
+	var out []BlockSummary
+	for _, b := range parseText(text, es, true) {
+		var sb strings.Builder
+		for _, p := range b.paras {
+			for _, s := range p.spans {
+				if s.kind != spEmoji {
+					sb.WriteString(s.text)
+				}
+			}
+			sb.WriteByte(' ')
+		}
+		title := []rune(strings.Join(strings.Fields(sb.String()), " "))
+		if len(title) > 34 {
+			title = append(title[:33], '…')
+		}
+		out = append(out, BlockSummary{Title: string(title), Icon: b.icon})
+	}
+	return out
+}
+
+// IconName — подпись иконки для интерфейса.
+func IconName(k IconKind) string {
+	for _, c := range IconChoices {
+		if c.Kind == k {
+			return c.Name
+		}
+	}
+	return "Авто"
+}

@@ -20,3 +20,14 @@ var InterDisplayBold []byte
 //
 //go:embed emoji/twemoji.zip
 var TwemojiZip []byte
+
+// NotoColorEmoji — цветные эмодзи для поля ввода в окне программы
+// (в Windows 7 своего цветного шрифта эмодзи нет). OFL 1.1.
+//
+//go:embed fonts/NotoColorEmoji.ttf
+var NotoColorEmoji []byte
+
+// LogoAdresa — логотип по умолчанию (вырезан из присланного JPG, PNG с прозрачностью).
+//
+//go:embed brand/logo-adresa.png
+var LogoAdresa []byte
