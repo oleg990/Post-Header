@@ -3,10 +3,10 @@ package ui
 import (
 	"bytes"
 	"fmt"
-	"math"
 	"image"
 	"image/jpeg"
 	_ "image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -530,7 +530,6 @@ func (a *App) currentIcon(i int) render.IconKind {
 	}
 	return a.blocks[i].Icon
 }
-
 
 func (a *App) outDir() string {
 	if a.cfg.OutDir != "" {
