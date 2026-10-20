@@ -3,8 +3,7 @@ package ui
 import (
 	"image"
 	"os"
-
-	xdraw "golang.org/x/image/draw"
+	"sync"
 
 	"postheader/assets"
 	"postheader/internal/render"
@@ -44,9 +43,9 @@ type worker struct {
 	results chan result
 	wake    func()
 
-	emoji    *render.EmojiSet
-	renderer *render.Renderer
-	font     fontChoice
+	emoji     *render.EmojiSet
+	renderers []*render.Renderer // по одному на вариант: варианты рисуются параллельно
+	font      fontChoice
 }
 
 func newWorker(wake func()) (*worker, error) {
@@ -59,12 +58,12 @@ func newWorker(wake func()) (*worker, error) {
 		return nil, err
 	}
 	w := &worker{
-		jobs:     make(chan job, 1),
-		results:  make(chan result, 4),
-		wake:     wake,
-		emoji:    emoji,
-		renderer: render.NewRenderer(fonts, emoji),
+		jobs:    make(chan job, 1),
+		results: make(chan result, 4),
+		wake:    wake,
+		emoji:   emoji,
 	}
+	w.setFonts(fonts)
 	go w.loop()
 	return w, nil
 }
@@ -111,43 +110,70 @@ func (w *worker) useFont(f fontChoice) error {
 	if err != nil {
 		return err
 	}
-	w.renderer = render.NewRenderer(fonts, w.emoji)
+	w.setFonts(fonts)
 	w.font = f
 	return nil
 }
 
+func (w *worker) setFonts(f *render.Fonts) {
+	w.renderers = w.renderers[:0]
+	for range render.Styles {
+		w.renderers = append(w.renderers, render.NewRenderer(f.Clone(), w.emoji))
+	}
+}
+
 func (w *worker) render(j job) ([]variant, error) {
-	var out []variant
-	for i, st := range render.Styles {
-		if i >= j.variants {
-			break
-		}
-		// Новое задание пришло — эту работу дальше не делаем.
-		if len(w.jobs) > 0 {
-			return out, nil
-		}
-		o := j.opts
-		o.Style = st
-		res, err := w.renderer.Render(j.text, o)
+	n := j.variants
+	if n > len(render.Styles) {
+		n = len(render.Styles)
+	}
+	out := make([]variant, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			o := j.opts
+			o.Style = render.Styles[i]
+			res, err := w.renderers[i].Render(j.text, o)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			v := variant{style: o.Style, pages: res.Pages, base: res.BaseSize}
+			v.slides = len(res.Pages) > 1
+			for _, p := range res.Pages {
+				v.previews = append(v.previews, preview(p))
+			}
+			out[i] = v
+		}(i)
+	}
+	wg.Wait()
+	for _, err := range errs {
 		if err != nil {
 			return nil, err
 		}
-		v := variant{style: st, pages: res.Pages, base: res.BaseSize}
-		v.slides = len(res.Pages) > 1
-		for _, p := range res.Pages {
-			v.previews = append(v.previews, preview(p, 620))
-		}
-		out = append(out, v)
 	}
 	return out, nil
 }
 
-// preview уменьшает картинку качественным фильтром: в окне она выглядит
-// чётко, а не «лесенкой», как при масштабировании видеокартой.
-func preview(src *image.RGBA, width int) image.Image {
+// preview уменьшает картинку вдвое усреднением 2×2: в окне она выглядит
+// чётко, а считается в разы быстрее фильтров x/image (важно для 32-битной сборки).
+func preview(src *image.RGBA) image.Image {
 	b := src.Bounds()
-	h := b.Dy() * width / b.Dx()
-	dst := image.NewRGBA(image.Rect(0, 0, width, h))
-	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, b, xdraw.Src, nil)
+	w, h := b.Dx()/2, b.Dy()/2
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		r0 := src.Pix[src.PixOffset(b.Min.X, b.Min.Y+2*y):]
+		r1 := src.Pix[src.PixOffset(b.Min.X, b.Min.Y+2*y+1):]
+		d := dst.Pix[y*dst.Stride:]
+		for x := 0; x < w; x++ {
+			i, j := 8*x, 4*x
+			for c := 0; c < 4; c++ {
+				d[j+c] = uint8((uint32(r0[i+c]) + uint32(r0[i+4+c]) + uint32(r1[i+c]) + uint32(r1[i+4+c]) + 2) >> 2)
+			}
+		}
+	}
 	return dst
 }

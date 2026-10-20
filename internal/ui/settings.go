@@ -2,7 +2,10 @@ package ui
 
 import (
 	"image"
-	"time"
+	"strings"
+
+	"gioui.org/f32"
+	"gioui.org/widget/material"
 
 	"gioui.org/font"
 	"gioui.org/layout"
@@ -25,11 +28,20 @@ type settingsPanel struct {
 	addressFocus ease
 	logoBtn      Button
 	logoReset    Button
-	fontPrev     Button
-	fontNext     Button
+	fontToggle   Button
+	fontOpen     bool
+	fontSearch   widget.Editor
+	fontSearchF  ease
+	fontList     widget.List
+	fontItems    []widget.Clickable
 	dirBtn       Button
+	dirPick      Button
+	dirReset     Button
 	doneBtn      Button
 	list         widget.List
+
+	name, phone   widget.Editor
+	nameF, phoneF ease
 
 	families []fontscan.Family
 	scanning bool
@@ -40,6 +52,11 @@ type settingsPanel struct {
 func (s *settingsPanel) show(gtx C, a *App) {
 	s.open = true
 	s.list.Axis = layout.Vertical
+	s.fontList.Axis = layout.Vertical
+	s.fontSearch.SingleLine = true
+	s.name.SingleLine, s.phone.SingleLine = true, true
+	s.name.SetText(a.cfg.UserName)
+	s.phone.SetText(a.cfg.UserPhone)
 	if s.families == nil && !s.scanning {
 		s.scanning = true
 		go func() {
@@ -49,25 +66,29 @@ func (s *settingsPanel) show(gtx C, a *App) {
 	}
 }
 
-func (s *settingsPanel) fontIndex(a *App) int {
-	for i, f := range s.families {
-		if f.Regular == a.cfg.FontPath {
-			return i + 1
-		}
-	}
-	return 0 // встроенный Inter
-}
-
-func (s *settingsPanel) setFont(a *App, idx int) {
-	n := len(s.families) + 1
-	idx = (idx%n + n) % n
-	if idx == 0 {
+// setFont: idx 0 — встроенный Inter, иначе семейство из списка.
+func (s *settingsPanel) setFont(a *App, f *fontscan.Family) {
+	if f == nil {
 		a.cfg.FontName, a.cfg.FontPath, a.cfg.FontBold = "", "", ""
 	} else {
-		f := s.families[idx-1]
 		a.cfg.FontName, a.cfg.FontPath, a.cfg.FontBold = f.Name, f.Regular, f.Bold
 	}
 	a.submit()
+}
+
+// filtered — шрифты, подходящие под строку поиска (nil — встроенный Inter).
+func (s *settingsPanel) filtered() []*fontscan.Family {
+	q := strings.ToLower(strings.TrimSpace(s.fontSearch.Text()))
+	out := []*fontscan.Family{}
+	if q == "" || strings.Contains("inter встроенный", q) {
+		out = append(out, nil)
+	}
+	for i := range s.families {
+		if q == "" || strings.Contains(strings.ToLower(s.families[i].Name), q) {
+			out = append(out, &s.families[i])
+		}
+	}
+	return out
 }
 
 func (s *settingsPanel) update(gtx C, a *App) {
@@ -80,6 +101,37 @@ func (s *settingsPanel) update(gtx C, a *App) {
 			a.cfg.Address = s.address.Text()
 			a.dirty, a.dirtyAt = true, gtx.Now
 		}
+	}
+	for _, ed := range []*widget.Editor{&s.name, &s.phone} {
+		for {
+			ev, ok := ed.Update(gtx)
+			if !ok {
+				break
+			}
+			if _, ok := ev.(widget.ChangeEvent); ok {
+				a.setProfile(s.name.Text(), s.phone.Text())
+			}
+		}
+	}
+	if s.fontToggle.Clicked(gtx) {
+		s.fontOpen = !s.fontOpen
+	}
+	if s.dirPick.Clicked(gtx) {
+		go func() {
+			p, err := platform.ChooseFolder("Куда сохранять готовые посты")
+			a.post(func() {
+				if err != nil {
+					a.notify(err.Error(), true)
+				} else if p != "" {
+					a.cfg.OutDir = p
+					a.saveConfig()
+				}
+			})
+		}()
+	}
+	if s.dirReset.Clicked(gtx) {
+		a.cfg.OutDir = ""
+		a.saveConfig()
 	}
 	if s.logoBtn.Clicked(gtx) {
 		go func() {
@@ -99,12 +151,6 @@ func (s *settingsPanel) update(gtx C, a *App) {
 		a.cfg.LogoPath = ""
 		a.loadLogo()
 		a.submit()
-	}
-	if s.fontPrev.Clicked(gtx) {
-		s.setFont(a, s.fontIndex(a)-1)
-	}
-	if s.fontNext.Clicked(gtx) {
-		s.setFont(a, s.fontIndex(a)+1)
 	}
 	if s.dirBtn.Clicked(gtx) {
 		platform.OpenFolder(a.outDir())
@@ -126,7 +172,7 @@ func (s *settingsPanel) layout(gtx C, a *App) {
 	}
 
 	// затемнение; клик по нему закрывает панель
-	paint.FillShape(gtx.Ops, alpha(rgb(0x000000), 0.8*p), clip.Rect{Max: gtx.Constraints.Max}.Op())
+	paint.FillShape(gtx.Ops, alpha(rgb(0x000000), 0.45*p), clip.Rect{Max: gtx.Constraints.Max}.Op())
 	s.backdrop.Layout(gtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
 
 	w := gtx.Dp(460)
@@ -149,9 +195,19 @@ func (s *settingsPanel) layout(gtx C, a *App) {
 		}
 	}
 	rows := []layout.Widget{
-		func(gtx C) D {
-			return layout.Inset{Bottom: 24}.Layout(gtx, label(th, 22, "Настройки", cGold, font.Bold).Layout)
-		},
+		section("Сотрудник", func(gtx C) D {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx C) D {
+					return fieldFrame(gtx, gtx.Focused(&s.name), &s.nameF, editorStyle(th, &s.name, "Ваше имя").Layout)
+				}),
+				layout.Rigid(layout.Spacer{Height: 8}.Layout),
+				layout.Rigid(func(gtx C) D {
+					return fieldFrame(gtx, gtx.Focused(&s.phone), &s.phoneF, editorStyle(th, &s.phone, "Рабочий телефон").Layout)
+				}),
+				layout.Rigid(layout.Spacer{Height: 6}.Layout),
+				layout.Rigid(label(th, 12, "Телефон сам подставляется в новые посты.", cMuted, font.Normal).Layout),
+			)
+		}),
 		section("Логотип в шапке", func(gtx C) D {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx C) D {
@@ -178,36 +234,25 @@ func (s *settingsPanel) layout(gtx C, a *App) {
 		section("Адрес в шапке", func(gtx C) D {
 			return fieldFrame(gtx, gtx.Focused(&s.address), &s.addressFocus, editorStyle(th, &s.address, "мкр. Степной 18").Layout)
 		}),
-		section("Шрифт постов", func(gtx C) D {
-			name := "Inter (встроенный)"
-			if a.cfg.FontName != "" {
-				name = a.cfg.FontName
-			}
-			hint := "Шрифты Windows с кириллицей. Символы, которых нет в шрифте (например ₽), возьмутся из Inter."
-			if s.scanning {
-				hint = "Ищу шрифты на компьютере…"
-			} else if s.families != nil {
-				hint = itoa(len(s.families)) + " шрифтов с кириллицей. " + hint
-			}
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(func(gtx C) D {
-					return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx C) D { return s.fontPrev.Layout(gtx, th, "‹", btnChip, false) }),
-						layout.Flexed(1, func(gtx C) D {
-							return layout.Center.Layout(gtx, label(th, 15, name, cText, font.SemiBold).Layout)
-						}),
-						layout.Rigid(func(gtx C) D { return s.fontNext.Layout(gtx, th, "›", btnChip, false) }),
-					)
-				}),
-				layout.Rigid(layout.Spacer{Height: 6}.Layout),
-				layout.Rigid(label(th, 12, hint, cMuted, font.Normal).Layout),
-			)
-		}),
+		section("Шрифт постов", func(gtx C) D { return s.layoutFonts(gtx, a) }),
 		section("Папка для готовых постов", func(gtx C) D {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(label(th, 13, a.outDir(), cText, font.Normal).Layout),
 				layout.Rigid(layout.Spacer{Height: 8}.Layout),
-				layout.Rigid(func(gtx C) D { return s.dirBtn.Layout(gtx, th, "Открыть папку", btnGhost, false) }),
+				layout.Rigid(func(gtx C) D {
+					return layout.Flex{}.Layout(gtx,
+						layout.Rigid(func(gtx C) D { return s.dirPick.Layout(gtx, th, "Выбрать папку…", btnGhost, false) }),
+						layout.Rigid(layout.Spacer{Width: 8}.Layout),
+						layout.Rigid(func(gtx C) D { return s.dirBtn.Layout(gtx, th, "Открыть", btnChip, false) }),
+						layout.Rigid(layout.Spacer{Width: 8}.Layout),
+						layout.Rigid(func(gtx C) D {
+							if a.cfg.OutDir == "" {
+								return D{}
+							}
+							return s.dirReset.Layout(gtx, th, "По умолчанию", btnChip, false)
+						}),
+					)
+				}),
 			)
 		}),
 		section("О программе", func(gtx C) D {
@@ -222,9 +267,142 @@ func (s *settingsPanel) layout(gtx C, a *App) {
 		func(gtx C) D { return s.doneBtn.Layout(gtx, th, "Готово", btnPrimary, false) },
 	}
 	layout.Inset{Top: 28, Left: 28, Right: 28, Bottom: 20}.Layout(gtx, func(gtx C) D {
-		return s.list.Layout(gtx, len(rows), func(gtx C, i int) D { return rows[i](gtx) })
+		// Заголовок и превью закреплены сверху: меняете что-то ниже — сразу видно результат.
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx C) D {
+				return layout.Inset{Bottom: 16}.Layout(gtx, label(th, 22, "Настройки", cGold, font.Bold).Layout)
+			}),
+			layout.Rigid(func(gtx C) D {
+				return layout.Inset{Bottom: 18}.Layout(gtx, func(gtx C) D { return s.layoutPreview(gtx, a) })
+			}),
+			layout.Flexed(1, func(gtx C) D {
+				return s.list.Layout(gtx, len(rows), func(gtx C, i int) D { return rows[i](gtx) })
+			}),
+		)
 	})
-	_ = time.Now
+}
+
+// layoutPreview — живая миниатюра первого варианта (шапка и начало текста):
+// видно, как меняется пост, пока вы правите настройки.
+func (s *settingsPanel) layoutPreview(gtx C, a *App) D {
+	th := a.th
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx C) D {
+			txt := "ТАК ВЫГЛЯДИТ ПОСТ"
+			col := cGold
+			if a.rendering {
+				txt, col = "ОБНОВЛЯЮ…", cGoldLight
+			}
+			return layout.Inset{Bottom: 8}.Layout(gtx, label(th, 11.5, txt, col, font.SemiBold).Layout)
+		}),
+		layout.Rigid(func(gtx C) D {
+			w := gtx.Constraints.Max.X
+			h := gtx.Dp(190)
+			r := image.Rectangle{Max: image.Pt(w, h)}
+			rad := gtx.Dp(10)
+			fillRRect(gtx, r, rad, rgb(0x0A0908))
+			if len(a.cards) > 0 && len(a.cards[0].ops) > 0 {
+				c := &a.cards[0]
+				op0 := c.ops[c.page]
+				sz := op0.Size()
+				func() {
+					defer clip.UniformRRect(r, rad).Push(gtx.Ops).Pop()
+					scale := float32(w) / float32(sz.X)
+					defer op.Affine(f32.Affine2D{}.Scale(f32.Point{}, f32.Pt(scale, scale))).Push(gtx.Ops).Pop()
+					op0.Add(gtx.Ops)
+					paint.PaintOp{}.Add(gtx.Ops)
+				}()
+				// мягкое затухание снизу: видно, что это верх поста
+				fillGradRect(gtx, image.Rect(0, h-gtx.Dp(50), w, h), alpha(cBg, 0), alpha(cBg, 0.9))
+			} else {
+				func() {
+					gtx := gtx
+					gtx.Constraints = layout.Exact(r.Max)
+					layout.Center.Layout(gtx, label(th, 12.5, "Введите текст поста, и здесь появится превью", cMuted, font.Normal).Layout)
+				}()
+			}
+			strokeRRect(gtx, r, rad, float32(gtx.Dp(1)), alpha(cGold, 0.35))
+			return D{Size: r.Max}
+		}),
+	)
+}
+
+// layoutFonts — текущий шрифт; по нажатию раскрывается список с поиском.
+func (s *settingsPanel) layoutFonts(gtx C, a *App) D {
+	th := a.th
+	name := "Inter (встроенный)"
+	if a.cfg.FontName != "" {
+		name = a.cfg.FontName
+	}
+	hint := "Символы, которых нет в шрифте (например ₽), возьмутся из Inter."
+	if s.scanning {
+		hint = "Ищу шрифты на компьютере…"
+	} else if s.families != nil {
+		hint = itoa(len(s.families)) + " шрифтов с кириллицей. " + hint
+	}
+	arrow := "· сменить"
+	if s.fontOpen {
+		arrow = "· свернуть"
+	}
+	children := []layout.FlexChild{
+		layout.Rigid(func(gtx C) D {
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			return s.fontToggle.Layout(gtx, th, name+"   "+arrow, btnChip, false)
+		}),
+	}
+	if s.fontOpen {
+		items := s.filtered()
+		if len(s.fontItems) < len(s.families)+1 {
+			s.fontItems = make([]widget.Clickable, len(s.families)+1)
+		}
+		for i, f := range items {
+			if s.fontItems[i].Clicked(gtx) {
+				s.setFont(a, f)
+			}
+		}
+		children = append(children,
+			layout.Rigid(layout.Spacer{Height: 8}.Layout),
+			layout.Rigid(func(gtx C) D {
+				return fieldFrame(gtx, gtx.Focused(&s.fontSearch), &s.fontSearchF, editorStyle(th, &s.fontSearch, "Поиск шрифта…").Layout)
+			}),
+			layout.Rigid(layout.Spacer{Height: 6}.Layout),
+			layout.Rigid(func(gtx C) D {
+				gtx.Constraints.Max.Y = gtx.Dp(240)
+				gtx.Constraints.Min.Y = 0
+				return material.List(th, &s.fontList).Layout(gtx, len(items), func(gtx C, i int) D {
+					f := items[i]
+					n, sel := "Inter (встроенный)", a.cfg.FontPath == ""
+					if f != nil {
+						n, sel = f.Name, f.Regular == a.cfg.FontPath
+					}
+					return s.fontItems[i].Layout(gtx, func(gtx C) D {
+						gtx.Constraints.Min.X = gtx.Constraints.Max.X
+						m := op.Record(gtx.Ops)
+						col := cText
+						if sel {
+							col = cDark
+						}
+						d := layout.Inset{Top: 7, Bottom: 7, Left: 10, Right: 10}.Layout(gtx, label(th, 13.5, n, col, font.Normal).Layout)
+						call := m.Stop()
+						r := image.Rectangle{Max: image.Pt(gtx.Constraints.Max.X, d.Size.Y)}
+						switch {
+						case sel:
+							fillRRect(gtx, r, gtx.Dp(7), cGold)
+						case s.fontItems[i].Hovered():
+							fillRRect(gtx, r, gtx.Dp(7), cPanelHi)
+						}
+						call.Add(gtx.Ops)
+						return D{Size: r.Max}
+					})
+				})
+			}),
+		)
+	}
+	children = append(children,
+		layout.Rigid(layout.Spacer{Height: 6}.Layout),
+		layout.Rigid(label(th, 12, hint, cMuted, font.Normal).Layout),
+	)
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 }
 
 func itoa(n int) string {

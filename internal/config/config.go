@@ -21,6 +21,11 @@ type Config struct {
 	FontBold   string `json:"font_bold,omitempty"`
 	OutDir     string `json:"out_dir,omitempty"`
 	Draft      string `json:"draft,omitempty"` // автосохранение текста
+
+	// Профиль сотрудника: спрашивается при первом запуске.
+	UserName  string `json:"user_name,omitempty"`
+	UserPhone string `json:"user_phone,omitempty"`
+	Welcomed  bool   `json:"welcomed,omitempty"`
 }
 
 func Default() Config {

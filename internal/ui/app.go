@@ -47,6 +47,7 @@ type App struct {
 	text, phone           widget.Editor
 	textFocus, phoneFocus ease
 	pasteBtn, clearBtn    Button
+	markup                markupBar
 
 	fmtBtns                                  [3]Button
 	bgBtns                                   [4]Button
@@ -76,10 +77,12 @@ type App struct {
 	toastErr                            bool
 	toastAt                             time.Time
 
-	settings settingsPanel
-	upd      updater
-	zoom     *paint.ImageOp
-	zoomBtn  widget.Clickable
+	settings               settingsPanel
+	upd                    updater
+	welcome                welcome
+	profileBtn, myPhoneBtn Button
+	zoom                   *paint.ImageOp
+	zoomBtn                widget.Clickable
 }
 
 type variantCard struct {
@@ -145,6 +148,9 @@ func (a *App) applyConfig() {
 	}
 	a.count = c.Variants - 1
 	a.phone.SetText(c.Phone)
+	if c.Phone == "" {
+		a.phone.SetText(c.UserPhone)
+	}
 	a.settings.address.SingleLine = true
 	a.settings.address.SetText(c.Address)
 	a.loadLogo()
@@ -278,6 +284,9 @@ func (a *App) frame(gtx C) {
 			a.splashDone = true
 			a.mainFade.restart(gtx.Now)
 			a.upd.check(a, false)
+			if !a.cfg.Welcomed {
+				a.welcome.show(a)
+			}
 		}
 		gtx.Execute(op.InvalidateCmd{})
 		return
@@ -295,6 +304,20 @@ func (a *App) frame(gtx C) {
 	}
 	a.layoutZoom(gtx)
 	a.settings.layout(gtx, a)
+	a.welcome.layout(gtx, a)
+}
+
+// setProfile сохраняет имя и телефон сотрудника; телефон сразу идёт в пост,
+// если там пусто или стоял прежний «свой» номер.
+func (a *App) setProfile(name, phone string) {
+	name, phone = strings.TrimSpace(name), strings.TrimSpace(phone)
+	cur := strings.TrimSpace(a.phone.Text())
+	if cur == "" || cur == a.cfg.UserPhone {
+		a.phone.SetText(phone)
+	}
+	a.cfg.UserName, a.cfg.UserPhone = name, phone
+	a.dirty, a.dirtyAt = true, time.Now()
+	a.w.Invalidate()
 }
 
 func (a *App) drainResults(gtx C) {
@@ -360,6 +383,7 @@ func (a *App) handleInput(gtx C) {
 		}
 	}
 
+	a.markup.update(gtx, a)
 	if a.pasteBtn.Clicked(gtx) {
 		go func() {
 			s, err := platform.ClipboardText()
@@ -466,8 +490,12 @@ func (a *App) handleInput(gtx C) {
 		os.MkdirAll(dir, 0o755)
 		platform.OpenFolder(dir)
 	}
-	if a.settingsBtn.Clicked(gtx) {
+	if a.settingsBtn.Clicked(gtx) || a.profileBtn.Clicked(gtx) {
 		a.settings.show(gtx, a)
+	}
+	if a.myPhoneBtn.Clicked(gtx) {
+		a.phone.SetText(a.cfg.UserPhone)
+		a.submit()
 	}
 }
 
@@ -561,6 +589,14 @@ func (a *App) layoutTopBar(gtx C) D {
 			}),
 			layout.Flexed(1, layout.Spacer{}.Layout),
 			layout.Rigid(func(gtx C) D { return a.upd.layoutBadge(gtx, a, &a.upd.btn) }),
+			layout.Rigid(func(gtx C) D {
+				if a.cfg.UserName == "" {
+					return D{}
+				}
+				return layout.Inset{Right: 10}.Layout(gtx, func(gtx C) D {
+					return a.profileBtn.Layout(gtx, a.th, "Сотрудник: "+a.cfg.UserName, btnChip, false)
+				})
+			}),
 			layout.Rigid(func(gtx C) D { return a.settingsBtn.Layout(gtx, a.th, "Настройки", btnGhost, false) }),
 		)
 	})
@@ -574,9 +610,11 @@ func (a *App) layoutLeft(gtx C) D {
 					layout.Flexed(1, func(gtx C) D {
 						return fieldFrame(gtx, gtx.Focused(&a.text), &a.textFocus, func(gtx C) D {
 							gtx.Constraints.Min = gtx.Constraints.Max
-							return editorStyle(a.th, &a.text, "Напишите или вставьте текст поста…\n\nПустая строка — новый блок.\n«– » в начале строки — пункт списка.\n**слово** — золотое выделение.").Layout(gtx)
+							return editorStyle(a.th, &a.text, "Напишите или вставьте текст поста…\n\nПустая строка — новый блок.\n«- » в начале строки — пункт списка с золотым тире.\nСтрока ПРОПИСНЫМИ — золотой заголовок.\n**слово** — золотое выделение.").Layout(gtx)
 						})
 					}),
+					layout.Rigid(layout.Spacer{Height: 8}.Layout),
+					layout.Rigid(a.layoutMarkup),
 					layout.Rigid(layout.Spacer{Height: 10}.Layout),
 					layout.Rigid(func(gtx C) D {
 						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
@@ -607,11 +645,40 @@ func (a *App) layoutLeft(gtx C) D {
 					}),
 					layout.Rigid(layout.Spacer{Height: 10}.Layout),
 					layout.Rigid(func(gtx C) D {
-						return segmented(gtx, a.th, a.phoneAtBtns[:], []string{"Не показывать", "В шапке", "Кнопкой внизу"}, &a.phoneAt)
+						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(func(gtx C) D {
+								return segmented(gtx, a.th, a.phoneAtBtns[:], []string{"Не показывать", "В шапке", "Внизу"}, &a.phoneAt)
+							}),
+							layout.Flexed(1, func(gtx C) D {
+								if a.cfg.UserPhone == "" || strings.TrimSpace(a.phone.Text()) == a.cfg.UserPhone {
+									return D{}
+								}
+								return layout.E.Layout(gtx, func(gtx C) D { return a.myPhoneBtn.Layout(gtx, a.th, "Мой номер", btnGhost, false) })
+							}),
+						)
 					}),
 				)
 			}, false)
 		}),
+	)
+}
+
+// layoutMarkup — ряд кнопок разметки под полем текста.
+func (a *App) layoutMarkup(gtx C) D {
+	m := &a.markup
+	chip := func(b *Button, txt string) layout.FlexChild {
+		return layout.Flexed(1, func(gtx C) D {
+			return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D {
+				gtx.Constraints.Min.X = gtx.Constraints.Max.X
+				return b.Layout(gtx, a.th, txt, btnChip, false)
+			})
+		})
+	}
+	return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
+		chip(&m.item, "– Пункт"),
+		chip(&m.heading, "Заголовок"),
+		chip(&m.gold, "Золотом"),
+		chip(&m.block, "+ Блок"),
 	)
 }
 

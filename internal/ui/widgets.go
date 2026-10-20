@@ -85,6 +85,11 @@ func fillGrad(gtx C, r image.Rectangle, radius int, top, bottom color.NRGBA) {
 	paint.PaintOp{}.Add(gtx.Ops)
 }
 
+// fillGradRect — вертикальный градиент в прямоугольнике без скругления.
+func fillGradRect(gtx C, r image.Rectangle, top, bottom color.NRGBA) {
+	fillGrad(gtx, r, 0, top, bottom)
+}
+
 // hexPath — шестиугольник (фирменный элемент «Адреса»); frac < 1 рисует его
 // частично — так в заставке он «прорисовывается» золотой линией.
 func hexPath(gtx C, cx, cy, r float32, frac float32) clip.PathSpec {

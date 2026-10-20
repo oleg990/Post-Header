@@ -322,6 +322,7 @@ func (r *Renderer) header(c *canvas, o Options, margin, bottom float64) {
 	logoH := bottom * 0.62
 	cy := bottom*0.5 + 4*k
 
+	logoRight := margin
 	if o.Brand.Logo != nil {
 		lb := o.Brand.Logo.Bounds()
 		lw := logoH * float64(lb.Dx()) / float64(lb.Dy())
@@ -335,32 +336,65 @@ func (r *Renderer) header(c *canvas, o Options, margin, bottom float64) {
 		} else {
 			xdraw.CatmullRom.Scale(c.img, dst, o.Brand.Logo, lb, xdraw.Over, nil)
 		}
+		logoRight = margin + lw
 	}
 
-	// Адрес справа: гексагон с меткой + текст.
-	addr := o.Brand.Address
+	// Адрес справа: гексагон с меткой + текст. Длинный адрес переносится
+	// на вторую строку и при необходимости чуть уменьшается.
 	phone := ""
 	if o.PhoneAt == PhoneHeader {
 		phone = FormatPhone(o.Phone)
 	}
-	as := 40 * k
-	ps := 30 * k
-	tw := c.textWidth(addr, Bold, as)
+	hex := 92 * k
+	gap := 24 * k
+	avail := W - margin - (logoRight + 36*k) - hex - gap
+	as, ps := 40*k, 30*k
+	lines := []string{o.Brand.Address}
+	if c.textWidth(o.Brand.Address, Bold, as) > avail {
+		lines = splitBalanced(o.Brand.Address, func(s string) float64 { return c.textWidth(s, Bold, as) })
+	}
+	maxLines := bottom * 0.78
+	for as > 24*k {
+		fits := len(lines)*int(as*1.15) <= int(maxLines)
+		for _, l := range lines {
+			if c.textWidth(l, Bold, as) > avail {
+				fits = false
+			}
+		}
+		if phone != "" && len(lines) > 1 {
+			fits = fits && float64(len(lines))*as*1.15+ps*1.3 <= maxLines
+		}
+		if fits {
+			break
+		}
+		as -= 2 * k
+		ps = math.Min(ps, as*0.8)
+	}
+	tw := 0.0
+	for _, l := range lines {
+		tw = math.Max(tw, c.textWidth(l, Bold, as))
+	}
 	if pw := c.textWidth(phone, SemiBold, ps); pw > tw {
 		tw = pw
 	}
-	hex := 92 * k
 	tx := W - margin - tw
-	hx := tx - 24*k - hex
+	hx := tx - gap - hex
 	head := c.pal.HeadTop
 	c.glow(hx+hex/2, cy, hex*0.8, c.pal.Gold, 0.10)
 	c.polyline(hexagon(hx+hex/2, cy, hex/2), 3.2*k, head)
 	c.pin(hx+hex/2, cy, hex*0.5, 3.6*k, head)
-	if phone == "" {
-		c.text(addr, tx, cy+as*0.36, Bold, as, head)
-	} else {
-		c.text(addr, tx, cy-4*k, Bold, as, head)
-		c.text(phone, tx, cy+ps*1.25, SemiBold, ps, c.pal.Accent)
+	lh := as * 1.15
+	total := float64(len(lines)) * lh
+	if phone != "" {
+		total += ps * 1.3
+	}
+	y := cy - total/2
+	for _, l := range lines {
+		c.text(l, tx, y+lh*0.5+as*0.36, Bold, as, head)
+		y += lh
+	}
+	if phone != "" {
+		c.text(phone, tx, y+ps*0.65+ps*0.36, SemiBold, ps, c.pal.Accent)
 	}
 
 	// Тонкая золотая линия со вспышкой в центре.
@@ -589,4 +623,22 @@ func TrimTransparent(img *image.NRGBA) image.Image {
 		return img
 	}
 	return img.SubImage(image.Rect(minX, minY, maxX+1, maxY+1))
+}
+
+// splitBalanced делит строку на две по пробелу так, чтобы половины были
+// как можно ближе по ширине.
+func splitBalanced(s string, width func(string) float64) []string {
+	words := strings.Fields(s)
+	if len(words) < 2 {
+		return []string{s}
+	}
+	best, bestD := 1, math.Inf(1)
+	for i := 1; i < len(words); i++ {
+		a := strings.Join(words[:i], " ")
+		b := strings.Join(words[i:], " ")
+		if d := math.Abs(width(a) - width(b)); d < bestD {
+			best, bestD = i, d
+		}
+	}
+	return []string{strings.Join(words[:best], " "), strings.Join(words[best:], " ")}
 }

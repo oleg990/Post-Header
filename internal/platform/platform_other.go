@@ -51,3 +51,8 @@ var _ = dib // используется только в Windows-версии
 func RunInstaller(path string) error {
 	return errors.New("обновление ставится только в Windows: " + path)
 }
+
+// ChooseFolder на других ОС берёт путь из POSTHEADER_DIR (для проверки).
+func ChooseFolder(title string) (string, error) {
+	return os.Getenv("POSTHEADER_DIR"), nil
+}

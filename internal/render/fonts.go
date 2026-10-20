@@ -138,6 +138,18 @@ func LoadFontSet(fs FontSet) (*Fonts, error) {
 	return base, nil
 }
 
+// Clone — копия для другой горутины: разобранные шрифты общие (они
+// потокобезопасны), а фейсы и их кэш свои.
+func (f *Fonts) Clone() *Fonts {
+	return &Fonts{
+		byWeight: f.byWeight,
+		inter:    f.inter,
+		custom:   f.custom,
+		hasGlyph: make(map[glyphKey]bool),
+		faces:    make(map[faceKey]font.Face),
+	}
+}
+
 // HasCyrillic — для списка шрифтов в интерфейсе: показываем только те, где есть кириллица.
 func HasCyrillic(data []byte) bool {
 	f, err := opentype.Parse(data)

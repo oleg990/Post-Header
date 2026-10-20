@@ -194,3 +194,48 @@ func FontDirs() []string {
 func RunInstaller(path string) error {
 	return exec.Command(path, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART").Start()
 }
+
+var (
+	shell32              = syscall.NewLazyDLL("shell32.dll")
+	ole32                = syscall.NewLazyDLL("ole32.dll")
+	pSHBrowseForFolderW  = shell32.NewProc("SHBrowseForFolderW")
+	pSHGetPathFromIDList = shell32.NewProc("SHGetPathFromIDListW")
+	pCoInitializeEx      = ole32.NewProc("CoInitializeEx")
+	pCoTaskMemFree       = ole32.NewProc("CoTaskMemFree")
+)
+
+type browseInfo struct {
+	owner       uintptr
+	root        uintptr
+	displayName *uint16
+	title       *uint16
+	flags       uint32
+	callback    uintptr
+	param       uintptr
+	image       int32
+}
+
+// ChooseFolder показывает стандартный выбор папки (есть и в Windows 7).
+// Пустая строка — пользователь отменил выбор.
+func ChooseFolder(title string) (string, error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	pCoInitializeEx.Call(0, 2) // COINIT_APARTMENTTHREADED: нужен «новому» виду диалога
+	name := make([]uint16, 260)
+	t, _ := syscall.UTF16PtrFromString(title)
+	bi := browseInfo{
+		displayName: &name[0],
+		title:       t,
+		flags:       0x0001 | 0x0040, // RETURNONLYFSDIRS | NEWDIALOGSTYLE
+	}
+	pidl, _, _ := pSHBrowseForFolderW.Call(uintptr(unsafe.Pointer(&bi)))
+	if pidl == 0 {
+		return "", nil
+	}
+	defer pCoTaskMemFree.Call(pidl)
+	path := make([]uint16, 1024)
+	if r, _, _ := pSHGetPathFromIDList.Call(pidl, uintptr(unsafe.Pointer(&path[0]))); r == 0 {
+		return "", errors.New("эту папку нельзя выбрать, выберите папку на диске")
+	}
+	return syscall.UTF16ToString(path), nil
+}
