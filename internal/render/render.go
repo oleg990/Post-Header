@@ -4,6 +4,7 @@ import (
 	"errors"
 	"image"
 	"image/color"
+	"image/draw"
 	"math"
 	"strings"
 
@@ -99,12 +100,17 @@ func NewRenderer(f *Fonts, e *EmojiSet) *Renderer { return &Renderer{fonts: f, e
 type palette struct {
 	Gold, Accent, Text, Card, Cutout, OnGold color.RGBA
 	Glow                                     float64 // сила свечений: на белом слабее, иначе «грязные» пятна
+	// Шапка: на белом светлое золото логотипа и адреса теряется, поэтому
+	// лого перекрашивается по маске в градиент HeadTop→HeadBottom, адрес — HeadTop.
+	TintLogo            bool
+	Shine               color.RGBA // цвет бликов и свечений
+	HeadTop, HeadBottom color.RGBA
 }
 
 var (
 	black    = rgb(0x080808)
-	darkPal  = palette{Gold: rgb(0xD9A85C), Accent: rgb(0xF0C77E), Text: rgb(0xEFEDEA), Card: rgb(0x121110), Cutout: black, OnGold: rgb(0x111111), Glow: 1}
-	lightPal = palette{Gold: rgb(0xB8893F), Accent: rgb(0xA36F22), Text: rgb(0x1D1C1A), Card: rgb(0xFBF8F2), Cutout: rgb(0xFFFFFF), OnGold: rgb(0x111111), Glow: 0.35}
+	darkPal  = palette{Gold: rgb(0xD9A85C), Accent: rgb(0xF0C77E), Text: rgb(0xEFEDEA), Card: rgb(0x121110), Cutout: black, OnGold: rgb(0x111111), Glow: 1, HeadTop: rgb(0xD9A85C), HeadBottom: rgb(0xD9A85C), Shine: rgb(0xF0C77E)}
+	lightPal = palette{Gold: rgb(0xB8893F), Accent: rgb(0xA36F22), Text: rgb(0x1D1C1A), Card: rgb(0xFBF8F2), Cutout: rgb(0xFFFFFF), OnGold: rgb(0x111111), Glow: 0.35, TintLogo: true, HeadTop: rgb(0xA9782C), HeadBottom: rgb(0x7E5A1E), Shine: rgb(0xF2DDB4)}
 )
 
 // Render собирает пост: фон, шапка, текстовые блоки, низ.
@@ -324,7 +330,11 @@ func (r *Renderer) header(c *canvas, o Options, margin, bottom float64) {
 			logoH = lw * float64(lb.Dy()) / float64(lb.Dx())
 		}
 		dst := image.Rect(int(margin), int(cy-logoH/2), int(margin+lw), int(cy+logoH/2))
-		xdraw.CatmullRom.Scale(c.img, dst, o.Brand.Logo, lb, xdraw.Over, nil)
+		if c.pal.TintLogo {
+			c.tintedLogo(o.Brand.Logo, dst)
+		} else {
+			xdraw.CatmullRom.Scale(c.img, dst, o.Brand.Logo, lb, xdraw.Over, nil)
+		}
 	}
 
 	// Адрес справа: гексагон с меткой + текст.
@@ -342,20 +352,36 @@ func (r *Renderer) header(c *canvas, o Options, margin, bottom float64) {
 	hex := 92 * k
 	tx := W - margin - tw
 	hx := tx - 24*k - hex
+	head := c.pal.HeadTop
 	c.glow(hx+hex/2, cy, hex*0.8, c.pal.Gold, 0.10)
-	c.polyline(hexagon(hx+hex/2, cy, hex/2), 3.2*k, c.pal.Gold)
-	c.pin(hx+hex/2, cy, hex*0.5, 3.6*k, c.pal.Gold)
+	c.polyline(hexagon(hx+hex/2, cy, hex/2), 3.2*k, head)
+	c.pin(hx+hex/2, cy, hex*0.5, 3.6*k, head)
 	if phone == "" {
-		c.text(addr, tx, cy+as*0.36, Bold, as, c.pal.Gold)
+		c.text(addr, tx, cy+as*0.36, Bold, as, head)
 	} else {
-		c.text(addr, tx, cy-4*k, Bold, as, c.pal.Gold)
+		c.text(addr, tx, cy-4*k, Bold, as, head)
 		c.text(phone, tx, cy+ps*1.25, SemiBold, ps, c.pal.Accent)
 	}
 
 	// Тонкая золотая линия со вспышкой в центре.
 	ly := bottom + 6*k
 	c.goldRule(margin, W-margin, ly, 2.2*k, 1)
-	c.glow(W/2, ly, 150*k, c.pal.Accent, 0.35)
+	c.glow(W/2, ly, 150*k, c.pal.Shine, 0.35)
+}
+
+// tintedLogo рисует логотип одной заливкой-градиентом по его прозрачности:
+// чётко и контрастно на светлом фоне, без «выцветших» краёв от JPG.
+func (c *canvas) tintedLogo(logo image.Image, dst image.Rectangle) {
+	tmp := image.NewNRGBA(image.Rect(0, 0, dst.Dx(), dst.Dy()))
+	xdraw.CatmullRom.Scale(tmp, tmp.Bounds(), logo, logo.Bounds(), xdraw.Src, nil)
+	mask := image.NewAlpha(tmp.Bounds())
+	for i := 0; i < len(mask.Pix); i++ {
+		// чуть поднимаем непрозрачность, чтобы тонкие линии не терялись
+		mask.Pix[i] = uint8(math.Min(255, float64(tmp.Pix[i*4+3])*1.25))
+	}
+	fill := image.NewRGBA(tmp.Bounds())
+	(&canvas{img: fill}).vGradient(fill.Bounds(), c.pal.HeadTop, c.pal.HeadBottom)
+	draw.DrawMask(c.img, dst, fill, image.Point{}, mask, image.Point{}, draw.Over)
 }
 
 // goldRule — горизонтальная линия, к краям гаснет.
@@ -478,8 +504,8 @@ func (c *canvas) wave(cy float64) {
 		a := 0.55 - float64(i)*0.09
 		c.stroke(p, (1.1+0.4*float64(4-i))*k, withAlpha(c.pal.Gold, a))
 	}
-	c.glow(W*0.42, cy-4*k, 140*k, c.pal.Accent, 0.45)
-	c.glow(W*0.72, cy+6*k, 90*k, c.pal.Accent, 0.3)
+	c.glow(W*0.42, cy-4*k, 140*k, c.pal.Shine, 0.45)
+	c.glow(W*0.72, cy+6*k, 90*k, c.pal.Shine, 0.3)
 }
 
 // --- утилиты ---
