@@ -47,3 +47,7 @@ func FontDirs() []string {
 }
 
 var _ = dib // используется только в Windows-версии
+
+func RunInstaller(path string) error {
+	return errors.New("обновление ставится только в Windows: " + path)
+}

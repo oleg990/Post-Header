@@ -38,3 +38,17 @@ GOOS=windows go build -ldflags "-H windowsgui" -o PostHeader.exe ./cmd/postheade
 Готовые .exe (64 и 32 бита) собирает GitHub Actions на Go 1.20.14 — артефакт `postheader-windows`, а по тегу `v*` — релиз.
 
 Для разработки на Linux окно собирается с Go ≤ 1.23 (cgo-ограничение Go 1.24 в Gio 0.6) и пакетами `libwayland-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libx11-xcb-dev libxcursor-dev libxfixes-dev libvulkan-dev`.
+
+## Установка и обновления
+
+Коллегам достаточно скачать `PostHeader-Setup-vX.Y.Z.exe` со страницы
+[Releases](https://github.com/oleg990/Post-Header/releases/latest) и запустить:
+права администратора не нужны, программа ставится в профиль пользователя,
+появляются ярлыки в «Пуске» и на рабочем столе. 64-битная сборка ставится
+автоматически там, где это возможно.
+
+Новая версия выпускается тегом: `git tag v0.2.0 && git push origin v0.2.0`.
+CI соберёт exe и установщик (`installer/PostHeader.iss`, Inno Setup 6.2.2)
+и опубликует релиз. Установленная программа при запуске проверяет последний
+релиз и показывает кнопку «Обновить до vX»: установщик скачивается, ставится
+тихо и снова открывает программу. Тестовые сборки (`dev-…`) не обновляются.

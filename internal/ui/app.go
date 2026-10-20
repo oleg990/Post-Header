@@ -77,6 +77,7 @@ type App struct {
 	toastAt                             time.Time
 
 	settings settingsPanel
+	upd      updater
 	zoom     *paint.ImageOp
 	zoomBtn  widget.Clickable
 }
@@ -276,6 +277,7 @@ func (a *App) frame(gtx C) {
 		if gtx.Now.Sub(a.splash.start) > 2100*time.Millisecond && (a.wk != nil || a.loadErr != nil) {
 			a.splashDone = true
 			a.mainFade.restart(gtx.Now)
+			a.upd.check(a, false)
 		}
 		gtx.Execute(op.InvalidateCmd{})
 		return
@@ -558,6 +560,7 @@ func (a *App) layoutTopBar(gtx C) D {
 				)
 			}),
 			layout.Flexed(1, layout.Spacer{}.Layout),
+			layout.Rigid(func(gtx C) D { return a.upd.layoutBadge(gtx, a, &a.upd.btn) }),
 			layout.Rigid(func(gtx C) D { return a.settingsBtn.Layout(gtx, a.th, "Настройки", btnGhost, false) }),
 		)
 	})

@@ -188,3 +188,9 @@ func FontDirs() []string {
 	}
 	return dirs
 }
+
+// RunInstaller запускает установщик обновления без вопросов; программа
+// после этого должна закрыться, а установщик запустит её снова.
+func RunInstaller(path string) error {
+	return exec.Command(path, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART").Start()
+}

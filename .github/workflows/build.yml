@@ -27,7 +27,7 @@ jobs:
         run: |
           GOOS=windows go vet ./...
           go vet ./internal/render ./internal/config ./internal/fontscan ./internal/platform ./cmd/postheader-cli
-          go test ./internal/render/...
+          go test ./internal/render/... ./internal/update/...
 
       - name: Build Windows exe (64 и 32 бита)
         run: |
@@ -44,6 +44,33 @@ jobs:
         with:
           name: postheader-windows
           path: dist/*.exe
+
+  installer:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: postheader-windows
+          path: dist
+
+      # 6.2.2 — установщик запускается на Windows 7 SP1.
+      - name: Inno Setup
+        run: choco install innosetup --version=6.2.2 -y --no-progress --allow-downgrade
+
+      - name: Сборка установщика
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF#refs/tags/v}"; else V="dev-${GITHUB_SHA::7}"; fi
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DAppVersion=$V" installer/PostHeader.iss
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: postheader-setup
+          path: dist/PostHeader-Setup-*.exe
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')

@@ -213,7 +213,9 @@ func (s *settingsPanel) layout(gtx C, a *App) {
 		section("О программе", func(gtx C) D {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(label(th, 13, Signature+" · версия "+Version, alpha(cGold, 0.8), font.Medium).Layout),
-				layout.Rigid(layout.Spacer{Height: 6}.Layout),
+				layout.Rigid(layout.Spacer{Height: 10}.Layout),
+				layout.Rigid(func(gtx C) D { return a.upd.layoutAbout(gtx, a) }),
+				layout.Rigid(layout.Spacer{Height: 10}.Layout),
 				layout.Rigid(label(th, 11.5, "Эмодзи: Twemoji (CC-BY 4.0) и Noto Color Emoji (OFL). Шрифт: Inter (OFL).", cMuted, font.Normal).Layout),
 			)
 		}),
