@@ -75,6 +75,9 @@ func newTheme() (*material.Theme, error) {
 		}
 		coll = append(coll, font.FontFace{Font: font.Font{Typeface: "Inter", Weight: f.weight}, Face: face})
 	}
+	if face, err := opentype.Parse(assets.CormorantItalic); err == nil {
+		coll = append(coll, font.FontFace{Font: font.Font{Typeface: "Cormorant", Style: font.Italic, Weight: font.SemiBold}, Face: face})
+	}
 	// Цветные эмодзи в поле ввода: шейпер берёт их отсюда, когда в Inter нет глифа.
 	emoji, err := opentype.Parse(assets.NotoColorEmoji)
 	if err != nil {

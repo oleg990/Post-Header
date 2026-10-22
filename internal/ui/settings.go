@@ -261,7 +261,7 @@ func (s *settingsPanel) layout(gtx C, a *App) {
 				layout.Rigid(layout.Spacer{Height: 10}.Layout),
 				layout.Rigid(func(gtx C) D { return a.upd.layoutAbout(gtx, a) }),
 				layout.Rigid(layout.Spacer{Height: 10}.Layout),
-				layout.Rigid(label(th, 11.5, "Эмодзи: Twemoji (CC-BY 4.0) и Noto Color Emoji (OFL). Шрифт: Inter (OFL). Словарь: © 1997–2008 А. И. Лебедев (BSD).", cMuted, font.Normal).Layout),
+				layout.Rigid(label(th, 11.5, "Эмодзи: Twemoji (CC-BY 4.0) и Noto Color Emoji (OFL). Шрифты: Inter и Cormorant Garamond (OFL). Словарь: © 1997–2008 А. И. Лебедев (BSD).", cMuted, font.Normal).Layout),
 			)
 		}),
 		func(gtx C) D { return s.doneBtn.Layout(gtx, th, "Готово", btnPrimary, false) },

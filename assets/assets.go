@@ -16,6 +16,12 @@ var InterSemiBold []byte
 //go:embed fonts/InterDisplay-Bold.ttf
 var InterDisplayBold []byte
 
+// Cormorant Garamond (OFL) — только для «Предсказания дня», чтобы блок
+// выглядел отдельно от остальной программы. Оставлены латиница и кириллица.
+//
+//go:embed fonts/CormorantGaramond-SemiBoldItalic.ttf
+var CormorantItalic []byte
+
 // Twemoji (графика CC-BY 4.0) в SVG, упакованные в zip: ~4 МБ вместо ~17 МБ.
 //
 //go:embed emoji/twemoji.zip
