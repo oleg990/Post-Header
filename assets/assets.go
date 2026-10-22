@@ -45,3 +45,9 @@ var SpellDic []byte
 
 //go:embed spell/ru_RU.aff.gz
 var SpellAff []byte
+
+// Что появилось в программе: показывается один раз тем, кто обновился
+// со старой версии.
+//
+//go:embed whatsnew.md
+var WhatsNew string

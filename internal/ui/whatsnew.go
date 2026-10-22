@@ -23,12 +23,13 @@ type newsDialog struct {
 	closing    bool
 	closeAt    time.Time
 	tag, notes string
+	info       bool // уже обновились: только «Понятно», без кнопки обновления
 	now, later Button
 	list       widget.List
 }
 
 func (n *newsDialog) show(tag, notes string) {
-	n.open, n.closing = true, false
+	n.open, n.closing, n.info = true, false, false
 	n.appear = timeline{}
 	n.tag, n.notes = tag, strings.TrimSpace(notes)
 	n.list.Axis = layout.Vertical
@@ -57,12 +58,20 @@ func parseNotes(s string) []newsLine {
 	return out
 }
 
+// showUpdated — окно после обновления: что появилось в программе.
+func (n *newsDialog) showUpdated(notes string) {
+	n.show(Version, notes)
+	n.info = true
+}
+
 func (n *newsDialog) layout(gtx C, a *App) {
 	if !n.open {
 		return
 	}
 	if !n.closing && n.now.Clicked(gtx) {
-		a.upd.install(a)
+		if !n.info {
+			a.upd.install(a)
+		}
 		n.closing, n.closeAt = true, gtx.Now
 	}
 	if !n.closing && n.later.Clicked(gtx) {
@@ -93,7 +102,7 @@ func (n *newsDialog) layout(gtx C, a *App) {
 	cgtx.Constraints = layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, gtx.Constraints.Max.Y-gtx.Dp(80))}
 	dims := layout.UniformInset(32).Layout(cgtx, func(gtx C) D {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			layout.Rigid(label(th, 12, "ОБНОВЛЕНИЕ "+strings.TrimPrefix(n.tag, "v"), alpha(cGold, 0.85), font.SemiBold).Layout),
+			layout.Rigid(label(th, 12, n.kicker(), alpha(cGold, 0.85), font.SemiBold).Layout),
 			layout.Rigid(layout.Spacer{Height: 6}.Layout),
 			layout.Rigid(label(th, 24, "Что нового", cGold, font.Bold).Layout),
 			layout.Rigid(layout.Spacer{Height: 16}.Layout),
@@ -124,6 +133,9 @@ func (n *newsDialog) layout(gtx C, a *App) {
 			}),
 			layout.Rigid(layout.Spacer{Height: 22}.Layout),
 			layout.Rigid(func(gtx C) D {
+				if n.info {
+					return n.now.Layout(gtx, th, "Понятно", btnPrimary, false)
+				}
 				txt := "Обновить сейчас"
 				if a.upd.loading {
 					txt = "Загрузка " + itoa(int(a.upd.progress*100)) + "%"
@@ -134,8 +146,18 @@ func (n *newsDialog) layout(gtx C, a *App) {
 					layout.Rigid(func(gtx C) D { return n.later.Layout(gtx, th, "Позже", btnGhost, false) }),
 				)
 			}),
-			layout.Rigid(layout.Spacer{Height: 12}.Layout),
-			layout.Rigid(label(th, 11.5, "Обновление займёт меньше минуты, черновик поста сохранится. Обновиться можно и позже — кнопкой вверху окна.", cMuted, font.Normal).Layout),
+			layout.Rigid(func(gtx C) D {
+				if n.info {
+					return D{}
+				}
+				return layout.Spacer{Height: 12}.Layout(gtx)
+			}),
+			layout.Rigid(func(gtx C) D {
+				if n.info {
+					return D{}
+				}
+				return label(th, 11.5, "Обновление займёт меньше минуты, черновик поста сохранится. Обновиться можно и позже — кнопкой вверху окна.", cMuted, font.Normal).Layout(gtx)
+			}),
 		)
 	})
 	call := m.Stop()
@@ -151,4 +173,11 @@ func (n *newsDialog) layout(gtx C, a *App) {
 	if p < 1 {
 		fillRRect(gtx, r, rad, alpha(cBg, 1-p))
 	}
+}
+
+func (n *newsDialog) kicker() string {
+	if n.info {
+		return "ПРОГРАММА ОБНОВЛЕНА"
+	}
+	return "ОБНОВЛЕНИЕ " + strings.TrimPrefix(n.tag, "v")
 }

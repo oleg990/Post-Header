@@ -213,6 +213,15 @@ func (a *App) applyConfig() {
 	if p := os.Getenv("POSTHEADER_PHOTO"); p != "" && os.Getenv("POSTHEADER_DEMO") != "" {
 		a.loadPhoto(p)
 	}
+	// Тот, кто обновился со старой версии, один раз видит, что нового.
+	// Новичку (профиль ещё не заполнен) и тестовой сборке окно не нужно.
+	if !c.NewsSeen && Version != "dev" && !strings.HasPrefix(Version, "dev-") && os.Getenv("POSTHEADER_DEMO") == "" {
+		if c.Welcomed {
+			a.news.showUpdated(assets.WhatsNew)
+		}
+		a.cfg.NewsSeen = true
+		a.saveConfig()
+	}
 	if p := os.Getenv("POSTHEADER_NEWS"); p != "" && os.Getenv("POSTHEADER_DEMO") != "" {
 		if b, err := os.ReadFile(p); err == nil {
 			a.news.show("v"+Version, string(b))

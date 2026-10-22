@@ -27,6 +27,7 @@ type Config struct {
 	UserName  string `json:"user_name,omitempty"`
 	UserPhone string `json:"user_phone,omitempty"`
 	Welcomed  bool   `json:"welcomed,omitempty"`
+	NewsSeen  bool   `json:"news_seen,omitempty"` // окно «Что нового» после обновления уже показано
 
 	UserWords []string `json:"user_words,omitempty"` // личный словарь для проверки орфографии
 	Align     int      `json:"align,omitempty"`      // 0 слева, 1 по центру
