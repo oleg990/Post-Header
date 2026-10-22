@@ -30,6 +30,12 @@ type Config struct {
 
 	UserWords []string `json:"user_words,omitempty"` // личный словарь для проверки орфографии
 	Align     int      `json:"align,omitempty"`      // 0 слева, 1 по центру
+
+	// Предсказание дня: на какой день открыто, какая фраза, какие уже были.
+	OracleDay   string `json:"oracle_day,omitempty"`
+	OracleIdx   int    `json:"oracle_idx,omitempty"`
+	OracleSeen  []int  `json:"oracle_seen,omitempty"`
+	OracleStyle int    `json:"oracle_style,omitempty"` // 0 шар, 1 печенье, 2 ключ, 3 гексагон
 }
 
 func Default() Config {

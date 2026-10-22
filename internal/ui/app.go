@@ -115,6 +115,7 @@ type App struct {
 	inlineMove  [3]Button    // ↑ ↓ убрать
 	history     historyPanel
 	news        newsDialog
+	oracle      oracleBox
 	historyBtn  Button
 }
 
@@ -931,63 +932,76 @@ func (a *App) layoutRight(gtx C) D {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
 			return card(gtx, a.th, "", func(gtx C) D {
-				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				// справа, если хватает ширины, — предсказание дня
+				colH := 0
+				return layout.Flex{}.Layout(gtx,
 					layout.Rigid(func(gtx C) D {
-						return layout.Flex{}.Layout(gtx,
+						d := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 							layout.Rigid(func(gtx C) D {
-								return group(gtx, a.th, "Размер", func(gtx C) D {
-									return segmented(gtx, a.th, a.fmtBtns[:], []string{"9:16 сторис", "4:5 пост", "1:1 квадрат"}, &a.format)
-								})
+								return layout.Flex{}.Layout(gtx,
+									layout.Rigid(func(gtx C) D {
+										return group(gtx, a.th, "Размер", func(gtx C) D {
+											return segmented(gtx, a.th, a.fmtBtns[:], []string{"9:16 сторис", "4:5 пост", "1:1 квадрат"}, &a.format)
+										})
+									}),
+									layout.Rigid(layout.Spacer{Width: 28}.Layout),
+									layout.Rigid(func(gtx C) D {
+										photo := "Фото объекта…"
+										if a.photoName != "" {
+											photo = "Фото: " + shorten(a.photoName, 14)
+										}
+										return group(gtx, a.th, "Фон", func(gtx C) D {
+											return segmented(gtx, a.th, a.bgBtns[:], []string{"Чёрный", "Белый", "Графит", photo}, &a.bgKind)
+										})
+									}),
+								)
 							}),
-							layout.Rigid(layout.Spacer{Width: 28}.Layout),
+							layout.Rigid(layout.Spacer{Height: 14}.Layout),
 							layout.Rigid(func(gtx C) D {
-								photo := "Фото объекта…"
-								if a.photoName != "" {
-									photo = "Фото: " + shorten(a.photoName, 14)
-								}
-								return group(gtx, a.th, "Фон", func(gtx C) D {
-									return segmented(gtx, a.th, a.bgBtns[:], []string{"Чёрный", "Белый", "Графит", photo}, &a.bgKind)
-								})
+								return layout.Flex{}.Layout(gtx,
+									layout.Rigid(func(gtx C) D {
+										return group(gtx, a.th, "Длинный текст", func(gtx C) D {
+											return segmented(gtx, a.th, a.ovBtns[:], []string{"Уменьшить шрифт", "Разбить на слайды"}, &a.overflow)
+										})
+									}),
+									layout.Rigid(layout.Spacer{Width: 28}.Layout),
+									layout.Rigid(func(gtx C) D {
+										return group(gtx, a.th, "Сколько вариантов", func(gtx C) D {
+											return segmented(gtx, a.th, a.cntBtns[:], []string{"1", "2", "3", "4"}, &a.count)
+										})
+									}),
+									layout.Rigid(layout.Spacer{Width: 28}.Layout),
+									layout.Rigid(func(gtx C) D {
+										return group(gtx, a.th, "Текст", func(gtx C) D {
+											return segmented(gtx, a.th, a.alignBtns[:], []string{"Слева", "По центру"}, &a.align)
+										})
+									}),
+								)
+							}),
+							layout.Rigid(layout.Spacer{Height: 14}.Layout),
+							layout.Rigid(func(gtx C) D {
+								return layout.Flex{}.Layout(gtx,
+									layout.Rigid(a.layoutTextSize),
+									layout.Rigid(layout.Spacer{Width: 28}.Layout),
+									layout.Rigid(func(gtx C) D {
+										return group(gtx, a.th, "Фото в посте", func(gtx C) D {
+											txt := "Добавить фото…"
+											if a.inline.Image != nil {
+												txt = "Фото: " + shorten(filepath.Base(a.inlinePath), 16) + " · сменить"
+											}
+											return a.inlineBtn.Layout(gtx, a.th, txt, btnChip, a.inline.Image != nil)
+										})
+									}),
+								)
 							}),
 						)
+						colH = d.Size.Y
+						return d
 					}),
-					layout.Rigid(layout.Spacer{Height: 14}.Layout),
-					layout.Rigid(func(gtx C) D {
-						return layout.Flex{}.Layout(gtx,
-							layout.Rigid(func(gtx C) D {
-								return group(gtx, a.th, "Длинный текст", func(gtx C) D {
-									return segmented(gtx, a.th, a.ovBtns[:], []string{"Уменьшить шрифт", "Разбить на слайды"}, &a.overflow)
-								})
-							}),
-							layout.Rigid(layout.Spacer{Width: 28}.Layout),
-							layout.Rigid(func(gtx C) D {
-								return group(gtx, a.th, "Сколько вариантов", func(gtx C) D {
-									return segmented(gtx, a.th, a.cntBtns[:], []string{"1", "2", "3", "4"}, &a.count)
-								})
-							}),
-							layout.Rigid(layout.Spacer{Width: 28}.Layout),
-							layout.Rigid(func(gtx C) D {
-								return group(gtx, a.th, "Текст", func(gtx C) D {
-									return segmented(gtx, a.th, a.alignBtns[:], []string{"Слева", "По центру"}, &a.align)
-								})
-							}),
-						)
-					}),
-					layout.Rigid(layout.Spacer{Height: 14}.Layout),
-					layout.Rigid(func(gtx C) D {
-						return layout.Flex{}.Layout(gtx,
-							layout.Rigid(a.layoutTextSize),
-							layout.Rigid(layout.Spacer{Width: 28}.Layout),
-							layout.Rigid(func(gtx C) D {
-								return group(gtx, a.th, "Фото в посте", func(gtx C) D {
-									txt := "Добавить фото…"
-									if a.inline.Image != nil {
-										txt = "Фото: " + shorten(filepath.Base(a.inlinePath), 16) + " · сменить"
-									}
-									return a.inlineBtn.Layout(gtx, a.th, txt, btnChip, a.inline.Image != nil)
-								})
-							}),
-						)
+					layout.Flexed(1, func(gtx C) D {
+						gtx.Constraints.Min = image.Point{}
+						gtx.Constraints.Max.Y = colH
+						return layout.Inset{Left: 24}.Layout(gtx, a.layoutOracle)
 					}),
 				)
 			}, false)
