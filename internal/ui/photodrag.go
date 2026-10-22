@@ -24,6 +24,7 @@ type photoDrag struct {
 	last    f32.Point
 	total   float32
 	moved   bool // было перетаскивание: клик-увеличение не срабатывает
+	clicked bool // нажали и отпустили, не двигая (в крупном просмотре — закрыть)
 	scroll  float32
 	hovered bool
 }
@@ -36,7 +37,7 @@ const (
 
 // photoDrag обрабатывает мышь над превью карточки. Возвращает true,
 // если на превью есть что двигать (тогда курсор — «рука»).
-func (a *App) photoDrag(gtx C, c *variantCard, v variant) bool {
+func (a *App) photoDrag(gtx C, d *photoDrag, c *variantCard, v variant, idx int) bool {
 	bgOn := a.bgKind == 3 && a.photo != nil
 	inlOn := a.inline.Image != nil && c.page == 0 && !v.inline.Empty()
 	if !bgOn && !inlOn || len(v.pages) == 0 {
@@ -52,7 +53,6 @@ func (a *App) photoDrag(gtx C, c *variantCard, v variant) bool {
 		return image.Pt(int(q.X), int(q.Y))
 	}
 
-	d := &c.drag
 	for {
 		ev, ok := gtx.Event(pointer.Filter{
 			Target:       d,
@@ -72,7 +72,7 @@ func (a *App) photoDrag(gtx C, c *variantCard, v variant) bool {
 		case pointer.Leave:
 			d.hovered = false
 		case pointer.Press:
-			d.last, d.total, d.moved = e.Position, 0, false
+			d.last, d.total, d.moved, d.clicked = e.Position, 0, false, false
 			d.target = dragNone
 			switch {
 			case inlOn && toPage(e.Position).In(v.inline):
@@ -92,8 +92,15 @@ func (a *App) photoDrag(gtx C, c *variantCard, v variant) bool {
 				d.moved = true
 			}
 			a.dragPhoto(d.target, float64(delta.X/sc), float64(delta.Y/sc), pb, v.inline)
-			a.dirty, a.dirtyAt = true, gtx.Now.Add(-300*time.Millisecond)
+			a.submitFast(idx)
 		case pointer.Release, pointer.Cancel:
+			if e.Kind == pointer.Release && !d.moved {
+				d.clicked = true
+				gtx.Execute(op.InvalidateCmd{}) // клик обработается в следующем кадре
+			}
+			if d.target != dragNone && d.moved {
+				a.dirty, a.dirtyAt = true, gtx.Now.Add(-350*time.Millisecond) // полный рендер всех вариантов
+			}
 			d.target = dragNone
 			a.dragging = false
 		case pointer.Scroll:
@@ -102,7 +109,9 @@ func (a *App) photoDrag(gtx C, c *variantCard, v variant) bool {
 				target = dragInline
 			}
 			if a.scrollPhoto(target, e.Scroll.Y, d) {
-				a.dirty, a.dirtyAt = true, gtx.Now.Add(-250*time.Millisecond)
+				a.dragging = true // показывать быстрые кадры, пока крутят колёсико
+				a.submitFast(idx)
+				a.dirty, a.dirtyAt = true, gtx.Now
 			}
 		}
 	}
@@ -114,7 +123,11 @@ func (a *App) photoDrag(gtx C, c *variantCard, v variant) bool {
 		pointer.CursorGrab.Add(gtx.Ops)
 	}
 	if d.hovered && d.target == dragNone {
-		layoutHint(gtx, a, "Тяните мышкой · колёсико — размер")
+		hint := "Тяните мышкой · колёсико — размер"
+		if !bgOn && a.inline.Over {
+			hint = "Тяните мышкой, чтобы выбрать кадр"
+		}
+		layoutHint(gtx, a, hint)
 	}
 	return true
 }
@@ -130,10 +143,12 @@ func (a *App) dragPhoto(target int, dx, dy float64, pb, box image.Rectangle) {
 		ib := a.inline.Image.Bounds()
 		w, h := float64(box.Dx()), float64(box.Dy())
 		s := math.Max(w/float64(ib.Dx()), h/float64(ib.Dy()))
-		hidden := float64(ib.Dy())*s - h
-		if hidden > 1 {
-			// тянем вниз — показывается верх снимка
+		// тянем вниз — показывается верх снимка, вправо — левый край
+		if hidden := float64(ib.Dy())*s - h; hidden > 1 {
 			a.inline.Y = clamp(a.inline.Y - 2*dy/hidden)
+		}
+		if hidden := float64(ib.Dx())*s - w; hidden > 1 {
+			a.inline.X = clamp(a.inline.X - 2*dx/hidden)
 		}
 	}
 }
@@ -158,6 +173,9 @@ func (a *App) scrollPhoto(target int, dy float32, d *photoDrag) bool {
 		a.photoAdj.Zoom = nz
 		return true
 	case dragInline:
+		if a.inline.Over { // фото и так на всё поле
+			return false
+		}
 		d.scroll += dy
 		if abs(d.scroll) < 40 {
 			return false
@@ -191,4 +209,13 @@ func layoutHint(gtx C, a *App, txt string) {
 	r := image.Rectangle{Max: dims.Size}
 	paint.FillShape(gtx.Ops, alpha(rgb(0x000000), 0.72), clip.UniformRRect(r, dims.Size.Y/2).Op(gtx.Ops))
 	call.Add(gtx.Ops)
+}
+
+func (a *App) anyDrag() bool {
+	for i := range a.cards {
+		if a.cards[i].drag.target != dragNone {
+			return true
+		}
+	}
+	return a.zoomDrag.target != dragNone
 }

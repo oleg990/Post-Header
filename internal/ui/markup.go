@@ -342,8 +342,8 @@ func resizeSel(ed *widget.Editor, d int) {
 		}
 	}
 	lvl += d
-	if lvl > 4 {
-		lvl = 4
+	if lvl > 14 {
+		lvl = 14
 	}
 	if lvl < -3 {
 		lvl = -3

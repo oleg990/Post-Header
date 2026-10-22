@@ -153,18 +153,23 @@ func (c *canvas) hexPattern(alpha float64) {
 
 // inlinePhoto — фото в скруглённой рамке: обрезается под рамку (по
 // ширине — по центру, по высоте — по выбору), сверху тонкая золотая кайма.
-func (c *canvas) inlinePhoto(ip InlinePhoto, x, y, w, h float64) {
+func (c *canvas) inlinePhoto(ip InlinePhoto, x, y, w, h float64, fast bool) {
 	k := c.k
 	r := 26 * k
 	pb := ip.Image.Bounds()
 	scale := math.Max(w/float64(pb.Dx()), h/float64(pb.Dy()))
 	cw, ch := int(w/scale), int(h/scale)
 	fy := (1 + math.Max(-1, math.Min(ip.Y, 1))) / 2
-	sx := pb.Min.X + (pb.Dx()-cw)/2
+	fx := (1 + math.Max(-1, math.Min(ip.X, 1))) / 2
+	sx := pb.Min.X + int(float64(pb.Dx()-cw)*fx)
 	sy := pb.Min.Y + int(float64(pb.Dy()-ch)*fy)
 	dst := image.Rect(int(x), int(y), int(x+w), int(y+h))
 	tmp := image.NewRGBA(image.Rect(0, 0, dst.Dx(), dst.Dy()))
-	xdraw.CatmullRom.Scale(tmp, tmp.Bounds(), ip.Image, image.Rect(sx, sy, sx+cw, sy+ch), xdraw.Src, nil)
+	var scaler xdraw.Scaler = xdraw.CatmullRom
+	if fast {
+		scaler = xdraw.ApproxBiLinear
+	}
+	scaler.Scale(tmp, tmp.Bounds(), ip.Image, image.Rect(sx, sy, sx+cw, sy+ch), xdraw.Src, nil)
 
 	// маска со скруглёнными углами
 	mask := image.NewAlpha(tmp.Bounds())

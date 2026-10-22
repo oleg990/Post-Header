@@ -88,6 +88,7 @@ type Options struct {
 	PhoneName  string           // имя и фамилия рядом с телефоном
 	TextSize   float64          // кегль основного текста в px на 1080; 0 — подобрать самому
 	Inline     InlinePhoto      // фото внутри поста, над или под текстом
+	Fast       bool             // черновое качество для живого превью
 }
 
 // InlinePhoto — фото объекта как часть поста (не фон): в скруглённой
@@ -96,7 +97,9 @@ type InlinePhoto struct {
 	Image  image.Image
 	Size   int     // 0 небольшое, 1 среднее, 2 крупное
 	Bottom bool    // под текстом (иначе над)
+	Over   bool    // текст поверх фото: фото занимает всё поле текста
 	Y      float64 // какую часть фото показать по высоте, -1 верх … 1 низ
+	X      float64 // то же по ширине, -1 левый край … 1 правый
 }
 
 // PhotoAdjust — как фото ложится в кадр. Нулевое значение — на весь кадр
@@ -167,7 +170,8 @@ func (r *Renderer) Render(text string, o Options) (*Result, error) {
 			blocks[i].icon = ic
 		}
 	}
-	if len(blocks) == 0 {
+	// Без текста пост можно сделать, если есть фото: тогда это пост-картинка.
+	if len(blocks) == 0 && o.Inline.Image == nil && o.Photo == nil {
 		return nil, errors.New("пустой текст")
 	}
 	var ban *banner
@@ -189,11 +193,22 @@ func (r *Renderer) Render(text string, o Options) (*Result, error) {
 	}
 
 	// Фото в посте: забирает часть высоты, текст подстраивается под остаток.
+	// Текст поверх фото или пост без текста: фото на всё поле текста.
 	var inl *inlineBox
-	if o.Inline.Image != nil {
+	switch {
+	case o.Inline.Image != nil && (o.Inline.Over || len(blocks) == 0):
+		inl = &inlineBox{x: margin, y: top, w: contentW, h: avail, over: len(blocks) > 0}
+		if inl.over {
+			pad := 44 * k
+			margin += pad
+			contentW -= 2 * pad
+			top += pad
+			avail -= 2 * pad
+		}
+	case o.Inline.Image != nil:
 		frac := []float64{0.30, 0.40, 0.52}[clampInt(o.Inline.Size, 0, 2)]
 		ih := math.Round(avail * frac)
-		inl = &inlineBox{h: ih}
+		inl = &inlineBox{x: margin, w: contentW, h: ih}
 		if o.Inline.Bottom {
 			inl.y = top + avail - ih
 		} else {
@@ -292,7 +307,10 @@ func (r *Renderer) Render(text string, o Options) (*Result, error) {
 	return r.paint(o, res, pages, m, paintCtx{margin, top, avail, contentW, headerBottom, footerH, ban, inl, framed, center})
 }
 
-type inlineBox struct{ y, h float64 }
+type inlineBox struct {
+	x, y, w, h float64
+	over       bool // под текстом: поверх фото кладётся затемнение
+}
 
 type paintCtx struct {
 	margin, top, avail, contentW, headerBottom, footerH float64
@@ -320,8 +338,12 @@ func (r *Renderer) paint(o Options, res *Result, pages [][]blockOut, m metrics, 
 			c.drawBanner(ban, outer, headerBottom+34*k, c.W()-2*outer)
 		}
 		if pc.inl != nil && pi == 0 {
-			c.inlinePhoto(o.Inline, margin, pc.inl.y, contentW, pc.inl.h)
-			res.Inline = image.Rect(int(margin), int(pc.inl.y), int(margin+contentW), int(pc.inl.y+pc.inl.h))
+			in := pc.inl
+			c.inlinePhoto(o.Inline, in.x, in.y, in.w, in.h, o.Fast)
+			if in.over {
+				c.roundRect(in.x, in.y, in.x+in.w, in.y+in.h, 26*k, withAlpha(c.pal.Cutout, 0.55))
+			}
+			res.Inline = image.Rect(int(in.x), int(in.y), int(in.x+in.w), int(in.y+in.h))
 		}
 		if framed {
 			c.postFrame(outer+8*k, top-30*k-10*k, c.W()-outer-8*k, float64(o.Format.H)-footerH+4*k)

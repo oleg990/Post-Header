@@ -22,6 +22,9 @@ type job struct {
 	opts     render.Options
 	variants int
 	font     fontChoice
+	// Быстрый кадр при перетаскивании фото: рисуется только один вариант
+	// и в половинном размере. -1 — обычный полный рендер.
+	only, page int
 }
 
 type variant struct {
@@ -35,6 +38,8 @@ type variant struct {
 
 type result struct {
 	gen      int
+	only     int         // быстрый кадр для одной карточки (-1 — полный рендер)
+	fast     image.Image // его превью
 	variants []variant
 	err      error
 }
@@ -80,9 +85,11 @@ func (w *worker) submit(j job) {
 
 func (w *worker) loop() {
 	for j := range w.jobs {
-		res := result{gen: j.gen}
+		res := result{gen: j.gen, only: j.only}
 		if err := w.useFont(j.font); err != nil {
 			res.err = err
+		} else if j.only >= 0 {
+			res.fast, res.err = w.renderFast(j)
 		} else {
 			res.variants, res.err = w.render(j)
 		}
@@ -157,6 +164,24 @@ func (w *worker) render(j job) ([]variant, error) {
 		}
 	}
 	return out, nil
+}
+
+// renderFast рисует один вариант вполовину меньше: для живого превью,
+// пока фото тянут мышкой. Полный рендер идёт после отпускания кнопки.
+func (w *worker) renderFast(j job) (image.Image, error) {
+	o := j.opts
+	o.Style = render.Styles[j.only]
+	o.Format.W, o.Format.H = o.Format.W/2, o.Format.H/2
+	o.Fast = true
+	res, err := w.renderers[j.only].Render(j.text, o)
+	if err != nil {
+		return nil, err
+	}
+	p := j.page
+	if p >= len(res.Pages) {
+		p = 0
+	}
+	return res.Pages[p], nil
 }
 
 // preview уменьшает картинку вдвое усреднением 2×2: в окне она выглядит

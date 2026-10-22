@@ -71,6 +71,7 @@ func (a *App) snapshot() history.Entry {
 	}
 	if a.inline.Image != nil {
 		e.InlinePath, e.InlineSize, e.InlineBottom, e.InlineY = a.inlinePath, a.inline.Size, a.inline.Bottom, a.inline.Y
+		e.InlineOver, e.InlineX = a.inline.Over, a.inline.X
 	}
 	return e
 }
@@ -78,7 +79,7 @@ func (a *App) snapshot() history.Entry {
 // remember сохраняет текущий пост в историю (вызывается при сохранении
 // и копировании картинки).
 func (a *App) remember(v variant) {
-	if strings.TrimSpace(a.text.Text()) == "" {
+	if strings.TrimSpace(a.text.Text()) == "" && !a.hasPhoto() {
 		return
 	}
 	e := a.snapshot()
@@ -104,7 +105,7 @@ func (a *App) restore(e history.Entry) {
 	if e.Background == 3 {
 		a.bgKind = 0
 		if img, err := decodeFile(e.PhotoPath); err == nil {
-			a.photo, a.photoName, a.photoPath, a.bgKind = img, filepath.Base(e.PhotoPath), e.PhotoPath, 3
+			a.photo, a.photoName, a.photoPath, a.bgKind = limitSize(img, 2200), filepath.Base(e.PhotoPath), e.PhotoPath, 3
 			a.photoAdj = render.PhotoAdjust{X: e.PhotoX, Y: e.PhotoY, Zoom: e.PhotoZoom, Sharp: e.PhotoSharp, Light: e.PhotoLight}
 		} else {
 			missing = append(missing, "фото фона")
@@ -113,7 +114,7 @@ func (a *App) restore(e history.Entry) {
 	a.inline, a.inlinePath = render.InlinePhoto{}, ""
 	if e.InlinePath != "" {
 		if img, err := decodeFile(e.InlinePath); err == nil {
-			a.inline = render.InlinePhoto{Image: img, Size: e.InlineSize, Bottom: e.InlineBottom, Y: e.InlineY}
+			a.inline = render.InlinePhoto{Image: limitSize(img, 2200), Size: e.InlineSize, Bottom: e.InlineBottom, Over: e.InlineOver, Y: e.InlineY, X: e.InlineX}
 			a.inlinePath = e.InlinePath
 		} else {
 			missing = append(missing, "фото в посте")

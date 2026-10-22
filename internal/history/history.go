@@ -41,7 +41,9 @@ type Entry struct {
 	InlinePath   string  `json:"inline_path,omitempty"` // фото в посте
 	InlineSize   int     `json:"inline_size,omitempty"`
 	InlineBottom bool    `json:"inline_bottom,omitempty"`
+	InlineOver   bool    `json:"inline_over,omitempty"`
 	InlineY      float64 `json:"inline_y,omitempty"`
+	InlineX      float64 `json:"inline_x,omitempty"`
 }
 
 // Title — первая строка текста для списка.

@@ -99,6 +99,9 @@ type App struct {
 	zoom                   *paint.ImageOp
 	zoomBtn                widget.Clickable
 	shownGen               int
+	zoomCard               int // какая карточка открыта крупно
+	zoomDrag               photoDrag
+	zoomClose              widget.Clickable
 	dragging               bool
 
 	textSize    float64 // 0 — подбирать самому, иначе кегль на 1080 px
@@ -106,7 +109,7 @@ type App struct {
 	inline      render.InlinePhoto
 	inlinePath  string
 	inlineBtn   Button
-	inlinePos   [2]Button
+	inlinePos   [3]Button
 	inlineSizes [3]Button
 	inlineMove  [3]Button // ↑ ↓ убрать
 	history     historyPanel
@@ -126,7 +129,7 @@ type variantCard struct {
 
 // Run открывает окно и крутит цикл событий до закрытия.
 func Run() error {
-	a := &App{cfg: config.Load(), ui: make(chan func(), 16), icons: map[int]render.IconKind{}, iconPick: -1}
+	a := &App{cfg: config.Load(), ui: make(chan func(), 16), icons: map[int]render.IconKind{}, iconPick: -1, zoomCard: -1}
 	a.w = new(app.Window)
 	a.w.Option(app.Title("Post Header"), app.Size(1360, 860), app.MinSize(1200, 760), app.Maximized.Option())
 	var err error
@@ -239,7 +242,7 @@ func (a *App) loadPhoto(path string) {
 		a.notify("Не удалось открыть фото: "+err.Error(), true)
 		return
 	}
-	a.photo, a.photoName, a.photoPath, a.bgKind = img, filepath.Base(path), path, 3
+	a.photo, a.photoName, a.photoPath, a.bgKind = limitSize(img, 2200), filepath.Base(path), path, 3
 	a.photoAdj = render.PhotoAdjust{}
 	a.submit()
 }
@@ -268,10 +271,29 @@ func (a *App) submit() {
 			delete(a.icons, i)
 		}
 	}
-	if strings.TrimSpace(txt) == "" {
+	if strings.TrimSpace(txt) == "" && !a.hasPhoto() {
 		a.variants, a.cards, a.rendering = nil, nil, false
 		return
 	}
+	a.gen++
+	a.rendering = true
+	a.wk.submit(job{gen: a.gen, text: txt, opts: a.options(), variants: a.count + 1, only: -1,
+		font: fontChoice{Regular: a.cfg.FontPath, Bold: a.cfg.FontBold}})
+	a.saveConfig()
+}
+
+// submitFast — быстрый кадр одной карточки, пока фото тянут мышкой.
+func (a *App) submitFast(card int) {
+	if a.wk == nil || card >= len(a.cards) {
+		return
+	}
+	a.gen++
+	a.wk.submit(job{gen: a.gen, text: a.text.Text(), opts: a.options(), only: card, page: a.cards[card].page,
+		font: fontChoice{Regular: a.cfg.FontPath, Bold: a.cfg.FontBold}})
+}
+
+// options — текущие настройки поста для рендера.
+func (a *App) options() render.Options {
 	o := render.Options{
 		Format:    render.Formats[a.format],
 		Overflow:  render.Overflow(a.overflow),
@@ -295,11 +317,7 @@ func (a *App) submit() {
 	case 3:
 		o.Background, o.Photo, o.PhotoAdj = render.BgPhoto, a.photo, a.photoAdj
 	}
-	a.gen++
-	a.rendering = true
-	a.wk.submit(job{gen: a.gen, text: txt, opts: o, variants: a.count + 1,
-		font: fontChoice{Regular: a.cfg.FontPath, Bold: a.cfg.FontBold}})
-	a.saveConfig()
+	return o
 }
 
 func (a *App) saveConfig() {
@@ -395,7 +413,19 @@ func (a *App) drainResults(gtx C) {
 				continue
 			}
 			a.shownGen = r.gen
+			if r.only >= 0 {
+				if r.err == nil && r.only < len(a.cards) {
+					c := &a.cards[r.only]
+					if c.page < len(c.ops) {
+						c.ops[c.page] = paint.NewImageOp(r.fast)
+					}
+				}
+				continue
+			}
 			a.rendering = r.gen != a.gen
+			if !a.rendering && !a.anyDrag() {
+				a.dragging = false
+			}
 			if r.err != nil {
 				a.notify("Ошибка рендера: "+r.err.Error(), true)
 				continue
@@ -418,6 +448,10 @@ func (a *App) drainResults(gtx C) {
 				c := &a.cards[i]
 				if c.page >= len(v.pages) {
 					c.page = 0
+				}
+				if i == a.zoomCard && a.zoom != nil {
+					op := paint.NewImageOp(v.pages[c.page])
+					a.zoom = &op
 				}
 				c.ops = c.ops[:0]
 				for _, p := range v.previews {
@@ -592,13 +626,15 @@ func (a *App) handleInput(gtx C) {
 				})
 			}()
 		}
-		if c.open.Clicked(gtx) && !c.drag.moved {
+		if c.open.Clicked(gtx) || c.drag.clicked {
+			c.drag.clicked = false
 			op := paint.NewImageOp(v.pages[c.page])
-			a.zoom = &op
+			a.zoom, a.zoomCard = &op, i
 		}
 	}
-	if a.zoomBtn.Clicked(gtx) {
-		a.zoom = nil
+	if a.zoomBtn.Clicked(gtx) || a.zoomClose.Clicked(gtx) || a.zoomDrag.clicked {
+		a.zoom, a.zoomCard = nil, -1
+		a.zoomDrag.clicked = false
 	}
 	if a.saveAllBtn.Clicked(gtx) {
 		for _, v := range a.variants {
@@ -1038,33 +1074,23 @@ func (a *App) layoutPhotoAdj(gtx C) D {
 	if zoom == 0 {
 		zoom = 1
 	}
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+	// Одна строка: двигать фото удобнее мышкой прямо на превью,
+	// поэтому стрелок сдвига здесь больше нет.
+	return layout.Flex{}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
-			return layout.Flex{}.Layout(gtx,
-				layout.Rigid(func(gtx C) D {
-					return group(gtx, a.th, "Сдвиг фото", chips([]string{"←", "→", "↑", "↓"}, a.photoMove[0:4]))
-				}),
-				layout.Rigid(layout.Spacer{Width: 22}.Layout),
-				layout.Rigid(func(gtx C) D {
-					return group(gtx, a.th, fmt.Sprintf("Размер фото %.0f%%", zoom*100), chips([]string{"−", "+", "Сбросить"}, a.photoMove[4:7]))
-				}),
-			)
+			return group(gtx, a.th, fmt.Sprintf("Фон: размер %.0f%%", zoom*100), chips([]string{"−", "+", "Сбросить"}, a.photoMove[4:7]))
 		}),
-		layout.Rigid(layout.Spacer{Height: 12}.Layout),
+		layout.Rigid(layout.Spacer{Width: 22}.Layout),
 		layout.Rigid(func(gtx C) D {
-			return layout.Flex{}.Layout(gtx,
-				layout.Rigid(func(gtx C) D {
-					return group(gtx, a.th, "Чёткость", func(gtx C) D {
-						return segmented(gtx, a.th, a.sharpBtns[:], []string{"Размыто", "Слегка", "Чётко"}, &a.photoAdj.Sharp)
-					})
-				}),
-				layout.Rigid(layout.Spacer{Width: 22}.Layout),
-				layout.Rigid(func(gtx C) D {
-					return group(gtx, a.th, "Яркость фото", func(gtx C) D {
-						return segmented(gtx, a.th, a.lightBtns[:], []string{"Обычно", "Светлее", "Темнее"}, &a.photoAdj.Light)
-					})
-				}),
-			)
+			return group(gtx, a.th, "Чёткость", func(gtx C) D {
+				return segmented(gtx, a.th, a.sharpBtns[:], []string{"Размыто", "Слегка", "Чётко"}, &a.photoAdj.Sharp)
+			})
+		}),
+		layout.Rigid(layout.Spacer{Width: 22}.Layout),
+		layout.Rigid(func(gtx C) D {
+			return group(gtx, a.th, "Яркость", func(gtx C) D {
+				return segmented(gtx, a.th, a.lightBtns[:], []string{"Обычно", "Светлее", "Темнее"}, &a.photoAdj.Light)
+			})
 		}),
 	)
 }
@@ -1115,7 +1141,7 @@ func shorten(s string, n int) string {
 
 func (a *App) layoutVariants(gtx C) D {
 	if len(a.cards) == 0 {
-		msg := "Вставьте текст поста слева — здесь появятся готовые варианты"
+		msg := "Вставьте текст поста слева или добавьте фото — здесь появятся готовые варианты"
 		if a.loadErr != nil {
 			msg = "Ошибка загрузки: " + a.loadErr.Error()
 		} else if a.rendering || a.wk == nil {
@@ -1161,7 +1187,7 @@ func (a *App) layoutCard(gtx C, i int) D {
 	c := &a.cards[i]
 	v := a.variants[i]
 	p := c.appear.at(gtx, 0, 380*time.Millisecond)
-	h := c.hover.to(gtx, boolf(c.open.Hovered()), 12)
+	h := c.hover.to(gtx, boolf(c.open.Hovered() || c.drag.hovered), 12)
 
 	defer op.Offset(image.Pt(0, int(float32(gtx.Dp(18))*(1-p)))).Push(gtx.Ops).Pop()
 
@@ -1177,15 +1203,18 @@ func (a *App) layoutCard(gtx C, i int) D {
 	return layout.UniformInset(12).Layout(gtx, func(gtx C) D {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Flexed(1, func(gtx C) D {
-				return c.open.Layout(gtx, func(gtx C) D {
-					gtx.Constraints.Min = gtx.Constraints.Max
-					d := widget.Image{Src: c.ops[c.page], Fit: widget.Contain, Position: layout.Center}.Layout(gtx)
-					defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
-					if !a.photoDrag(gtx, c, v) {
+				// Картинка и обработчик мыши — отдельными слоями: если фото есть,
+				// его тянут мышкой, а клик без движения открывает пост крупно.
+				gtx.Constraints.Min = gtx.Constraints.Max
+				widget.Image{Src: c.ops[c.page], Fit: widget.Contain, Position: layout.Center}.Layout(gtx)
+				defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+				if !a.photoDrag(gtx, &c.drag, c, v, i) {
+					c.open.Layout(gtx, func(gtx C) D {
 						pointer.CursorPointer.Add(gtx.Ops)
-					}
-					return D{Size: gtx.Constraints.Max, Baseline: d.Baseline}
-				})
+						return D{Size: gtx.Constraints.Max}
+					})
+				}
+				return D{Size: gtx.Constraints.Max}
 			}),
 			layout.Rigid(layout.Spacer{Height: 10}.Layout),
 			layout.Rigid(func(gtx C) D {
@@ -1297,17 +1326,32 @@ func (a *App) layoutFooter(gtx C) D {
 }
 
 // layoutZoom — крупный просмотр варианта по клику; клик в любом месте закрывает.
+// layoutZoom — пост крупно. Фото здесь тоже двигается мышкой: на большой
+// картинке это удобнее, чем на маленькой карточке.
 func (a *App) layoutZoom(gtx C) {
 	if a.zoom == nil {
 		return
 	}
+	if a.zoomCard >= len(a.cards) {
+		a.zoom, a.zoomCard = nil, -1
+		return
+	}
 	paint.FillShape(gtx.Ops, alpha(rgb(0x000000), 0.94), clip.Rect{Max: gtx.Constraints.Max}.Op())
-	a.zoomBtn.Layout(gtx, func(gtx C) D {
+	// Клик мимо картинки закрывает просмотр. Картинка лежит поверх кнопки
+	// отдельным слоем, чтобы перетаскивание фото не путалось с кликом.
+	a.zoomBtn.Layout(gtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+	layout.UniformInset(28).Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Min = gtx.Constraints.Max
-		layout.UniformInset(28).Layout(gtx, func(gtx C) D {
-			gtx.Constraints.Min = gtx.Constraints.Max
-			return widget.Image{Src: *a.zoom, Fit: widget.Contain, Position: layout.Center}.Layout(gtx)
-		})
+		src := *a.zoom
+		c := &a.cards[a.zoomCard]
+		if a.dragging && c.page < len(c.ops) {
+			src = c.ops[c.page] // быстрые кадры, пока тянут фото
+		}
+		widget.Image{Src: src, Fit: widget.Contain, Position: layout.Center}.Layout(gtx)
+		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+		if !a.photoDrag(gtx, &a.zoomDrag, c, a.variants[a.zoomCard], a.zoomCard) {
+			a.zoomClose.Layout(gtx, func(gtx C) D { return D{Size: gtx.Constraints.Max} })
+		}
 		return D{Size: gtx.Constraints.Max}
 	})
 }

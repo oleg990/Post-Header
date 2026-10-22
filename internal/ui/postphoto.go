@@ -2,9 +2,11 @@ package ui
 
 import (
 	"fmt"
+	"image"
 	"math"
 
 	"gioui.org/layout"
+	xdraw "golang.org/x/image/draw"
 
 	"postheader/internal/platform"
 	"postheader/internal/render"
@@ -54,13 +56,18 @@ func (a *App) layoutTextSize(gtx C) D {
 	})
 }
 
+// hasPhoto — есть фото, из которого можно сделать пост и без текста.
+func (a *App) hasPhoto() bool {
+	return a.inline.Image != nil || a.bgKind == 3 && a.photo != nil
+}
+
 func (a *App) loadInline(path string) {
 	img, err := decodeFile(path)
 	if err != nil {
 		a.notify("Не удалось открыть фото: "+err.Error(), true)
 		return
 	}
-	a.inline.Image, a.inline.Y, a.inlinePath = img, 0, path
+	a.inline.Image, a.inline.X, a.inline.Y, a.inlinePath = limitSize(img, 2200), 0, 0, path
 	if a.inline.Size == 0 && !a.inline.Bottom {
 		a.inline.Size = 1
 	}
@@ -86,7 +93,7 @@ func (a *App) updateInline(gtx C) bool {
 	old := a.inline
 	for i := range a.inlinePos {
 		if a.inlinePos[i].Clicked(gtx) {
-			a.inline.Bottom = i == 1
+			a.inline.Bottom, a.inline.Over = i == 1, i == 2
 		}
 	}
 	for i := range a.inlineSizes {
@@ -109,17 +116,23 @@ func (a *App) updateInline(gtx C) bool {
 
 func (a *App) layoutInline(gtx C) D {
 	pos := 0
-	if a.inline.Bottom {
+	switch {
+	case a.inline.Over:
+		pos = 2
+	case a.inline.Bottom:
 		pos = 1
 	}
 	return layout.Flex{Alignment: layout.End}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
 			return group(gtx, a.th, "Фото в посте", func(gtx C) D {
-				return segmented(gtx, a.th, a.inlinePos[:], []string{"Над текстом", "Под текстом"}, &pos)
+				return segmented(gtx, a.th, a.inlinePos[:], []string{"Над текстом", "Под текстом", "Текст на фото"}, &pos)
 			})
 		}),
 		layout.Rigid(layout.Spacer{Width: 22}.Layout),
 		layout.Rigid(func(gtx C) D {
+			if a.inline.Over {
+				return D{}
+			}
 			return group(gtx, a.th, "Высота", func(gtx C) D {
 				return segmented(gtx, a.th, a.inlineSizes[:], []string{"Небольшое", "Среднее", "Крупное"}, &a.inline.Size)
 			})
@@ -135,7 +148,21 @@ func (a *App) layoutInline(gtx C) D {
 			})
 		}),
 		layout.Flexed(1, func(gtx C) D {
-			return layout.E.Layout(gtx, func(gtx C) D { return a.inlineMove[2].Layout(gtx, a.th, "Убрать фото", btnGhost, false) })
+			return layout.E.Layout(gtx, func(gtx C) D { return a.inlineMove[2].Layout(gtx, a.th, "Убрать", btnGhost, false) })
 		}),
 	)
+}
+
+// limitSize уменьшает большое фото с телефона (4000×3000 и больше) один раз
+// при загрузке: для поста 1080 px этого хватает с запасом, а рендер
+// и перетаскивание идут в разы быстрее.
+func limitSize(img image.Image, max int) image.Image {
+	b := img.Bounds()
+	if b.Dx() <= max && b.Dy() <= max {
+		return img
+	}
+	s := float64(max) / math.Max(float64(b.Dx()), float64(b.Dy()))
+	dst := image.NewRGBA(image.Rect(0, 0, int(float64(b.Dx())*s), int(float64(b.Dy())*s)))
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), img, b, xdraw.Src, nil)
+	return dst
 }
