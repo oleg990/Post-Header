@@ -37,3 +37,24 @@ func TestResizeSel(t *testing.T) {
 		t.Fatalf("буква: %q", ed.Text())
 	}
 }
+
+func TestResizeSeveralLines(t *testing.T) {
+	var ed widget.Editor
+	ed.SetText("Первая строка\n- Вторая\n\nТретья")
+	ed.SetCaret(0, len([]rune(ed.Text())))
+	resizeSel(&ed, 1)
+	want := "{+Первая строка}\n- {+Вторая}\n\n{+Третья}"
+	if ed.Text() != want {
+		t.Fatalf("1: %q", ed.Text())
+	}
+	resizeSel(&ed, 1) // выделение осталось на тексте — повторное нажатие меняет шаг
+	want = "{++Первая строка}\n- {++Вторая}\n\n{++Третья}"
+	if ed.Text() != want {
+		t.Fatalf("2: %q", ed.Text())
+	}
+	resizeSel(&ed, -1)
+	resizeSel(&ed, -1)
+	if ed.Text() != "Первая строка\n- Вторая\n\nТретья" {
+		t.Fatalf("3: %q", ed.Text())
+	}
+}

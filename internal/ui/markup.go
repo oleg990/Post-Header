@@ -300,7 +300,9 @@ func toggleGold(ed *widget.Editor) {
 
 // resizeSel делает выделенные слова или буквы крупнее (d=1) или мельче (d=-1):
 // оборачивает их в {+…} / {-…}, а повторное нажатие меняет шаг. Без выделения
-// берётся слово под курсором. Выделение остаётся на тексте, чтобы жать дальше.
+// берётся слово под курсором. Если выделено несколько строк, каждая строка
+// размечается отдельно (разметка работает внутри строки), пустые пропускаются.
+// Выделение остаётся на тексте, чтобы жать дальше.
 func resizeSel(ed *widget.Editor, d int) {
 	r := []rune(ed.Text())
 	s, e := selection(ed)
@@ -316,8 +318,72 @@ func resizeSel(ed *widget.Editor, d int) {
 			return
 		}
 	}
+	var out []rune
+	first, last := -1, 0
+	inS, inE := 0, 0
+	multi := hasNewline(r[s:e])
+	for ls := s; ls <= e; {
+		le := ls
+		for le < e && r[le] != '\n' {
+			le++
+		}
+		ss, se := ls, le
+		if multi {
+			for ss < se && (unicode.IsSpace(r[ss]) || strings.ContainsRune("-–—•", r[ss])) && r[ss] != '{' {
+				ss++
+			}
+			for se > ss && unicode.IsSpace(r[se-1]) {
+				se--
+			}
+		}
+		if ss < se {
+			gs, ge, repl, off, n := resizeOne(r, ss, se, d)
+			inS, inE = gs+off, gs+off+n
+			if first < 0 {
+				first = gs
+				if gs < s { // группа выделена только внутри — берём её целиком
+					s = gs
+				}
+				out = append(out, r[s:gs]...)
+			} else {
+				out = append(out, r[last:gs]...)
+			}
+			out = append(out, []rune(repl)...)
+			last = ge
+		}
+		ls = le + 1
+	}
+	if first < 0 {
+		return
+	}
+	if last > e { // группа, выделенная только внутри, захватила скобку за выделением
+		e = last
+	}
+	out = append(out, r[last:e]...)
+	ed.SetCaret(s, e)
+	ed.Insert(string(out))
+	if !multi { // одна строка: выделен сам текст, без скобок разметки
+		ed.SetCaret(inS, inE)
+	} else {
+		ed.SetCaret(s, s+len(out))
+	}
+}
+
+func hasNewline(r []rune) bool {
+	for _, c := range r {
+		if c == '\n' {
+			return true
+		}
+	}
+	return false
+}
+
+// resizeOne размечает один кусок строки r[s:e]: возвращает границы, которые
+// нужно заменить (если кусок уже в группе, это вся группа), и новый текст.
+func resizeOne(r []rune, s, e, d int) (gs, ge int, repl string, off, n int) {
 	// уже размеченная группа: «{++текст}» выделена целиком или только текст внутри
-	gs, ge, lvl := s, e, 0
+	gs, ge = s, e
+	lvl := 0
 	if sel := r[s:e]; len(sel) > 3 && sel[0] == '{' && sel[len(sel)-1] == '}' && (sel[1] == '+' || sel[1] == '-') {
 		n := 1
 		for n < len(sel)-1 && sel[n] == sel[1] {
@@ -349,14 +415,12 @@ func resizeSel(ed *widget.Editor, d int) {
 		lvl = -3
 	}
 	inner := string(r[s:e])
-	repl, off := inner, 0
+	n = e - s
 	switch {
 	case lvl > 0:
-		repl, off = "{"+strings.Repeat("+", lvl)+inner+"}", 1+lvl
+		return gs, ge, "{" + strings.Repeat("+", lvl) + inner + "}", 1 + lvl, n
 	case lvl < 0:
-		repl, off = "{"+strings.Repeat("-", -lvl)+inner+"}", 1-lvl
+		return gs, ge, "{" + strings.Repeat("-", -lvl) + inner + "}", 1 - lvl, n
 	}
-	ed.SetCaret(gs, ge)
-	ed.Insert(repl)
-	ed.SetCaret(gs+off, gs+off+len([]rune(inner)))
+	return gs, ge, inner, 0, n
 }
