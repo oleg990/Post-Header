@@ -90,6 +90,13 @@ func Check(current string) (*Release, error) {
 
 // Download сохраняет установщик во временную папку; progress получает 0..1.
 func Download(rel *Release, progress func(float32)) (string, error) {
+	dir := filepath.Join(os.TempDir(), "PostHeader-update")
+	// имя с версией: облегчённый установщик называется одинаково в каждом релизе
+	path := filepath.Join(dir, rel.Tag+"-"+filepath.Base(rel.Name))
+	// уже скачан при прошлом запуске
+	if st, err := os.Stat(path); err == nil && rel.Size > 0 && st.Size() == rel.Size {
+		return path, nil
+	}
 	dl := &http.Client{Timeout: 10 * time.Minute}
 	req, err := http.NewRequest("GET", rel.URL, nil)
 	if err != nil {
@@ -108,12 +115,11 @@ func Download(rel *Release, progress func(float32)) (string, error) {
 	if total <= 0 {
 		total = rel.Size
 	}
-	dir := filepath.Join(os.TempDir(), "PostHeader-update")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, filepath.Base(rel.Name))
-	f, err := os.Create(path)
+	part := path + ".part" // недокачанный файл не примем за готовый
+	f, err := os.Create(part)
 	if err != nil {
 		return "", err
 	}
@@ -144,6 +150,9 @@ func Download(rel *Release, progress func(float32)) (string, error) {
 	}
 	if rel.Size > 0 && done != rel.Size {
 		return "", errors.New("файл скачался не полностью, попробуйте ещё раз")
+	}
+	if err := os.Rename(part, path); err != nil {
+		return "", err
 	}
 	return path, nil
 }

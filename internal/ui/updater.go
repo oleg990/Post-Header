@@ -12,13 +12,17 @@ import (
 )
 
 // updater — автообновление: при запуске тихо спрашивает GitHub о новой
-// версии; если она есть, в шапке окна появляется кнопка «Обновить».
+// версии; если она есть, в шапке окна появляется кнопка «Обновить», а
+// установщик сразу начинает скачиваться в фоне. Пока человек дойдёт до
+// кнопки, файл обычно уже скачан, и обновление ставится сразу.
 type updater struct {
 	rel      *update.Release
 	checking bool
 	status   string // для раздела «О программе»
-	loading  bool
+	loading  bool   // человек нажал «Обновить» и ждёт
 	progress float32
+	fetching bool   // установщик скачивается
+	path     string // скачанный установщик
 
 	btn, btn2, checkBtn Button
 }
@@ -41,6 +45,7 @@ func (u *updater) check(a *App, manual bool) {
 			case rel != nil:
 				u.rel = rel
 				u.status = "Доступна версия " + rel.Tag
+				u.fetch(a)
 				if !manual {
 					a.news.show(rel.Tag, rel.Notes)
 				}
@@ -53,11 +58,13 @@ func (u *updater) check(a *App, manual bool) {
 	}()
 }
 
-func (u *updater) install(a *App) {
-	if u.rel == nil || u.loading {
+// fetch скачивает установщик в фоне; если человек уже нажал «Обновить»,
+// после загрузки сразу ставит его.
+func (u *updater) fetch(a *App) {
+	if u.rel == nil || u.fetching || u.path != "" {
 		return
 	}
-	u.loading, u.progress = true, 0
+	u.fetching, u.progress = true, 0
 	rel := u.rel
 	go func() {
 		last := -1
@@ -67,21 +74,47 @@ func (u *updater) install(a *App) {
 				a.post(func() { u.progress = p })
 			}
 		})
-		if err == nil {
-			err = platform.RunInstaller(path)
-		}
 		a.post(func() {
+			u.fetching = false
 			if err != nil {
-				u.loading = false
-				a.notify("Обновление не удалось: "+err.Error(), true)
+				// фоновая загрузка не удалась — молча; по кнопке попробуем снова
+				if u.loading {
+					u.loading = false
+					a.notify("Обновление не удалось: "+err.Error(), true)
+				}
 				return
 			}
-			// Установщик заменит файлы и сам запустит новую версию.
-			a.cfg.Draft = a.text.Text()
-			config.Save(a.cfg)
-			os.Exit(0)
+			u.path = path
+			if u.loading {
+				u.run(a)
+			}
 		})
 	}()
+}
+
+func (u *updater) install(a *App) {
+	if u.rel == nil || u.loading {
+		return
+	}
+	u.loading = true
+	if u.path != "" {
+		u.run(a)
+		return
+	}
+	u.fetch(a)
+}
+
+// run запускает скачанный установщик и закрывает программу.
+func (u *updater) run(a *App) {
+	if err := platform.RunInstaller(u.path); err != nil {
+		u.loading, u.path = false, ""
+		a.notify("Обновление не удалось: "+err.Error(), true)
+		return
+	}
+	// Установщик заменит файлы и сам запустит новую версию.
+	a.cfg.Draft = a.text.Text()
+	config.Save(a.cfg)
+	os.Exit(0)
 }
 
 // layoutBadge — кнопка обновления в шапке окна (пусто, если обновлять нечего).
