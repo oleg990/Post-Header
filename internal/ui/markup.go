@@ -17,6 +17,7 @@ import (
 
 type markupBar struct {
 	item, num, heading, gold, emojiBtn, spellBtn Button
+	bigger, smaller                              Button
 	emojiOpen, spellOpen                         bool
 	emojis                                       []Button
 
@@ -43,6 +44,10 @@ func (m *markupBar) update(gtx C, a *App) {
 		m.toggleHeading(ed)
 	case m.gold.Clicked(gtx):
 		toggleGold(ed)
+	case m.bigger.Clicked(gtx):
+		resizeSel(ed, 1)
+	case m.smaller.Clicked(gtx):
+		resizeSel(ed, -1)
 	default:
 		changed = false
 	}
@@ -87,12 +92,14 @@ func (m *markupBar) layout(gtx C, a *App) D {
 			chip(&m.item, "– Пункт", false),
 			chip(&m.num, "1. Список", false),
 			chip(&m.heading, "Заголовок", false),
+			chip(&m.bigger, "Крупнее", false),
 		)),
 		layout.Rigid(layout.Spacer{Height: 4}.Layout),
 		layout.Rigid(row(
 			chip(&m.gold, "Золотом", false),
 			chip(&m.emojiBtn, "Эмодзи", m.emojiOpen),
 			chip(&m.spellBtn, spellLabel(a), m.spellOpen),
+			chip(&m.smaller, "Мельче", false),
 		)),
 	}
 	if m.emojiOpen {
@@ -289,4 +296,67 @@ func toggleGold(ed *widget.Editor) {
 	default:
 		replaceRange(ed, s, e, "**"+sel+"**")
 	}
+}
+
+// resizeSel делает выделенные слова или буквы крупнее (d=1) или мельче (d=-1):
+// оборачивает их в {+…} / {-…}, а повторное нажатие меняет шаг. Без выделения
+// берётся слово под курсором. Выделение остаётся на тексте, чтобы жать дальше.
+func resizeSel(ed *widget.Editor, d int) {
+	r := []rune(ed.Text())
+	s, e := selection(ed)
+	if s == e {
+		isW := func(c rune) bool { return unicode.IsLetter(c) || unicode.IsDigit(c) || c == '%' }
+		for s > 0 && isW(r[s-1]) {
+			s--
+		}
+		for e < len(r) && isW(r[e]) {
+			e++
+		}
+		if s == e {
+			return
+		}
+	}
+	// уже размеченная группа: «{++текст}» выделена целиком или только текст внутри
+	gs, ge, lvl := s, e, 0
+	if sel := r[s:e]; len(sel) > 3 && sel[0] == '{' && sel[len(sel)-1] == '}' && (sel[1] == '+' || sel[1] == '-') {
+		n := 1
+		for n < len(sel)-1 && sel[n] == sel[1] {
+			n++
+		}
+		lvl = n - 1
+		if sel[1] == '-' {
+			lvl = -lvl
+		}
+		s, e = gs+n, ge-1
+	} else {
+		j := s
+		for j > 0 && (r[j-1] == '+' || r[j-1] == '-') && (j == s || r[j-1] == r[j]) {
+			j--
+		}
+		if j < s && j > 0 && r[j-1] == '{' && e < len(r) && r[e] == '}' {
+			lvl = s - j
+			if r[j] == '-' {
+				lvl = -lvl
+			}
+			gs, ge = j-1, e+1
+		}
+	}
+	lvl += d
+	if lvl > 4 {
+		lvl = 4
+	}
+	if lvl < -3 {
+		lvl = -3
+	}
+	inner := string(r[s:e])
+	repl, off := inner, 0
+	switch {
+	case lvl > 0:
+		repl, off = "{"+strings.Repeat("+", lvl)+inner+"}", 1+lvl
+	case lvl < 0:
+		repl, off = "{"+strings.Repeat("-", -lvl)+inner+"}", 1-lvl
+	}
+	ed.SetCaret(gs, ge)
+	ed.Insert(repl)
+	ed.SetCaret(gs+off, gs+off+len([]rune(inner)))
 }

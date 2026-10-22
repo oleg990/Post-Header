@@ -27,9 +27,10 @@ type job struct {
 type variant struct {
 	style    render.Style
 	pages    []*image.RGBA
-	previews []image.Image // уменьшенные копии для показа в окне
-	slides   bool          // текст не влез и разбит на слайды
-	base     float64       // кегль основного текста, px на 1080
+	previews []image.Image   // уменьшенные копии для показа в окне
+	slides   bool            // текст не влез и разбит на слайды
+	base     float64         // кегль основного текста, px на 1080
+	inline   image.Rectangle // фото в посте на первом слайде, px картинки
 }
 
 type result struct {
@@ -141,7 +142,7 @@ func (w *worker) render(j job) ([]variant, error) {
 				errs[i] = err
 				return
 			}
-			v := variant{style: o.Style, pages: res.Pages, base: res.BaseSize}
+			v := variant{style: o.Style, pages: res.Pages, base: res.BaseSize, inline: res.Inline}
 			v.slides = len(res.Pages) > 1
 			for _, p := range res.Pages {
 				v.previews = append(v.previews, preview(p))

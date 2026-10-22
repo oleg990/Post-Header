@@ -98,6 +98,8 @@ type App struct {
 	iconPrev, iconNext     []Button
 	zoom                   *paint.ImageOp
 	zoomBtn                widget.Clickable
+	shownGen               int
+	dragging               bool
 
 	textSize    float64 // 0 — подбирать самому, иначе кегль на 1080 px
 	sizeBtns    [3]Button
@@ -108,6 +110,7 @@ type App struct {
 	inlineSizes [3]Button
 	inlineMove  [3]Button // ↑ ↓ убрать
 	history     historyPanel
+	news        newsDialog
 	historyBtn  Button
 }
 
@@ -118,6 +121,7 @@ type variantCard struct {
 	appear                 timeline
 	hover                  ease
 	ops                    []paint.ImageOp
+	drag                   photoDrag
 }
 
 // Run открывает окно и крутит цикл событий до закрытия.
@@ -203,6 +207,11 @@ func (a *App) applyConfig() {
 	}
 	if p := os.Getenv("POSTHEADER_PHOTO"); p != "" && os.Getenv("POSTHEADER_DEMO") != "" {
 		a.loadPhoto(p)
+	}
+	if p := os.Getenv("POSTHEADER_NEWS"); p != "" && os.Getenv("POSTHEADER_DEMO") != "" {
+		if b, err := os.ReadFile(p); err == nil {
+			a.news.show("v"+Version, string(b))
+		}
 	}
 	if p := os.Getenv("POSTHEADER_INLINE"); p != "" && os.Getenv("POSTHEADER_DEMO") != "" {
 		a.loadInline(p)
@@ -356,6 +365,7 @@ func (a *App) frame(gtx C) {
 	a.layoutZoom(gtx)
 	a.history.layout(gtx, a)
 	a.settings.layout(gtx, a)
+	a.news.layout(gtx, a)
 	a.welcome.layout(gtx, a)
 }
 
@@ -379,29 +389,40 @@ func (a *App) drainResults(gtx C) {
 	for {
 		select {
 		case r := <-a.wk.results:
-			if r.gen != a.gen {
+			// Пока фото тянут мышкой, показываем и промежуточные кадры,
+			// иначе превью замрёт до конца перетаскивания.
+			if r.gen <= a.shownGen || (r.gen != a.gen && !a.dragging) {
 				continue
 			}
-			a.rendering = false
+			a.shownGen = r.gen
+			a.rendering = r.gen != a.gen
 			if r.err != nil {
 				a.notify("Ошибка рендера: "+r.err.Error(), true)
 				continue
 			}
-			old := a.cards
+			// Карточки обновляются на месте: так не сбиваются перетаскивание фото,
+			// наведение и открытый слайд.
 			a.variants = r.variants
-			a.cards = make([]variantCard, len(r.variants))
+			if len(a.cards) != len(r.variants) {
+				old := a.cards
+				a.cards = make([]variantCard, len(r.variants))
+				for i := range a.cards {
+					if i < len(old) {
+						a.cards[i] = old[i]
+					} else {
+						a.cards[i].appear.restart(gtx.Now.Add(time.Duration(i) * 70 * time.Millisecond))
+					}
+				}
+			}
 			for i, v := range r.variants {
 				c := &a.cards[i]
-				if i < len(old) {
-					c.page = old[i].page
-				}
 				if c.page >= len(v.pages) {
 					c.page = 0
 				}
+				c.ops = c.ops[:0]
 				for _, p := range v.previews {
 					c.ops = append(c.ops, paint.NewImageOp(p))
 				}
-				c.appear.restart(gtx.Now.Add(time.Duration(i) * 70 * time.Millisecond))
 			}
 		default:
 			return
@@ -571,7 +592,7 @@ func (a *App) handleInput(gtx C) {
 				})
 			}()
 		}
-		if c.open.Clicked(gtx) {
+		if c.open.Clicked(gtx) && !c.drag.moved {
 			op := paint.NewImageOp(v.pages[c.page])
 			a.zoom = &op
 		}
@@ -1160,7 +1181,9 @@ func (a *App) layoutCard(gtx C, i int) D {
 					gtx.Constraints.Min = gtx.Constraints.Max
 					d := widget.Image{Src: c.ops[c.page], Fit: widget.Contain, Position: layout.Center}.Layout(gtx)
 					defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
-					pointer.CursorPointer.Add(gtx.Ops)
+					if !a.photoDrag(gtx, c, v) {
+						pointer.CursorPointer.Add(gtx.Ops)
+					}
 					return D{Size: gtx.Constraints.Max, Baseline: d.Baseline}
 				})
 			}),

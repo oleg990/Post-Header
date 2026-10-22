@@ -5,6 +5,7 @@ package render
 type lineOut struct {
 	x, y, h float64 // x — от левого края текстовой колонки, y — от верха блока
 	size    float64
+	big     float64 // самый крупный множитель в строке (≥ 1)
 	weight  Weight
 	heading bool
 	mark    string // золотое «–» или номер «1.» перед пунктом
@@ -46,9 +47,10 @@ func (c *canvas) layoutBlocks(blocks []block, m metrics) []blockOut {
 			}
 			lines := c.wrap(p.spans, m.textW-indent, size, weight)
 			for li, l := range lines {
-				h := size * lh
+				big := maxScale(l)
+				h := size*lh + size*(big-1)*1.05
 				bo.lines = append(bo.lines, lineOut{
-					x: indent, y: y, h: h, size: size, weight: weight,
+					x: indent, y: y, h: h, size: size, big: big, weight: weight,
 					heading: p.kind == pHeading,
 					mark:    markFor(p, li),
 					spans:   l,
@@ -63,6 +65,17 @@ func (c *canvas) layoutBlocks(blocks []block, m metrics) []blockOut {
 		out = append(out, bo)
 	}
 	return out
+}
+
+// maxScale — самый крупный кусок строки; строка не бывает ниже обычной.
+func maxScale(l []span) float64 {
+	m := 1.0
+	for _, sp := range l {
+		if sp.kind != spSpace && sp.sc() > m {
+			m = sp.sc()
+		}
+	}
+	return m
 }
 
 func markFor(p para, li int) string {
@@ -88,6 +101,7 @@ func stackHeight(bs []blockOut, gap float64) float64 {
 }
 
 func (c *canvas) spanWidth(sp *span, size float64, w Weight) float64 {
+	size *= sp.sc()
 	switch sp.kind {
 	case spEmoji:
 		return size*1.15 + size*0.12
@@ -122,8 +136,25 @@ func (c *canvas) wrap(spans []span, maxW, size float64, w Weight) [][]span {
 			add += spaceW
 		}
 		if len(cur) > 0 && curW+add > maxW {
+			// часть слова другого размера переносится вместе со всем словом
+			var carry []span
+			if sp.glue && !pendingSpace {
+				j := len(cur) - 1
+				for j > 0 && cur[j].glue {
+					j--
+				}
+				if j > 0 {
+					carry = append(carry, cur[j:]...)
+					cur = cur[:j]
+					for len(cur) > 0 && cur[len(cur)-1].kind == spSpace {
+						cur = cur[:len(cur)-1]
+					}
+				}
+			}
 			flush()
 			pendingSpace = false
+			cur = carry
+			curW = lineWidth(carry)
 		}
 		if pendingSpace {
 			cur = append(cur, span{kind: spSpace, text: " ", w: spaceW})

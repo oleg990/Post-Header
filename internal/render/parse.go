@@ -26,7 +26,54 @@ type span struct {
 	text   string
 	emoji  string
 	accent bool
+	scale  float64 // размер слова относительно строки: {+…} крупнее, {-…} мельче; 0 — как строка
+	glue   bool    // слово продолжает предыдущее без пробела (часть слова другого размера)
 	w      float64
+}
+
+// sc — множитель размера куска.
+func (sp span) sc() float64 {
+	if sp.scale == 0 {
+		return 1
+	}
+	return sp.scale
+}
+
+// Шаги размера для разметки {+текст}, {++текст}, {-текст} и т. д.
+var (
+	growSteps   = []float64{1, 1.25, 1.5, 1.8, 2.2}
+	shrinkSteps = []float64{1, 0.85, 0.7, 0.55}
+)
+
+// sizeMark разбирает начало «{++» на позиции i: множитель и длину метки.
+func sizeMark(rs []rune, i int) (float64, int) {
+	if rs[i] != '{' || i+1 >= len(rs) || (rs[i+1] != '+' && rs[i+1] != '-') {
+		return 0, 0
+	}
+	sign, n := rs[i+1], 0
+	for i+1+n < len(rs) && rs[i+1+n] == sign {
+		n++
+	}
+	// закрывающая скобка должна быть дальше, иначе это просто текст
+	closed := false
+	for _, r := range rs[i+1+n:] {
+		if r == '}' {
+			closed = true
+			break
+		}
+	}
+	if !closed {
+		return 0, 0
+	}
+	steps := growSteps
+	if sign == '-' {
+		steps = shrinkSteps
+	}
+	lvl := n
+	if lvl >= len(steps) {
+		lvl = len(steps) - 1
+	}
+	return steps[lvl], 1 + n
 }
 
 type paraKind int
@@ -129,14 +176,29 @@ func tokenize(line string, es *EmojiSet) []span {
 	var out []span
 	var word []rune
 	accent := false
+	scale := 0.0
 	flush := func() {
 		if len(word) > 0 {
 			w := string(word)
-			out = append(out, span{kind: spWord, text: w, accent: accent || accentRe.MatchString(w)})
+			glue := len(out) > 0 && out[len(out)-1].kind == spWord
+			out = append(out, span{kind: spWord, text: w, accent: accent || accentRe.MatchString(w), scale: scale, glue: glue})
 			word = word[:0]
 		}
 	}
 	for i := 0; i < len(rs); {
+		if scale == 0 {
+			if f, n := sizeMark(rs, i); n > 0 {
+				flush()
+				scale = f
+				i += n
+				continue
+			}
+		} else if rs[i] == '}' {
+			flush()
+			scale = 0
+			i++
+			continue
+		}
 		if rs[i] == '*' && i+1 < len(rs) && rs[i+1] == '*' {
 			flush()
 			accent = !accent
@@ -145,7 +207,7 @@ func tokenize(line string, es *EmojiSet) []span {
 		}
 		if name, n := es.Match(rs, i); n > 0 {
 			flush()
-			out = append(out, span{kind: spEmoji, emoji: name})
+			out = append(out, span{kind: spEmoji, emoji: name, scale: scale})
 			i += n
 			continue
 		}

@@ -1,6 +1,7 @@
 package render
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -61,5 +62,19 @@ func TestFormatPhone(t *testing.T) {
 		if got := FormatPhone(in); got != "+7 (920) 595-28-88" {
 			t.Errorf("%q → %q", in, got)
 		}
+	}
+}
+
+func TestSizeMarkup(t *testing.T) {
+	sp := tokenize("и {++Д}ругим {-мелко} {+без скобки", &EmojiSet{})
+	var got []string
+	for _, s := range sp {
+		if s.kind == spWord {
+			got = append(got, fmt.Sprintf("%s:%.2f:%v", s.text, s.sc(), s.glue))
+		}
+	}
+	want := "[и:1.00:false Д:1.50:false ругим:1.00:true мелко:0.85:false {+без:1.00:false скобки:1.00:false]"
+	if fmt.Sprint(got) != want {
+		t.Fatalf("got %v\nwant %s", got, want)
 	}
 }

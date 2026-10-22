@@ -83,10 +83,10 @@ func (c *canvas) drawBanner(b *banner, x, y, w float64) {
 		for _, sp := range l {
 			switch sp.kind {
 			case spEmoji:
-				es := b.size * 1.1
+				es := b.size * sp.sc() * 1.1
 				c.emojiAt(sp.emoji, lx, ly+b.size*1.18/2-es/2, es)
 			case spWord:
-				c.text(sp.text, lx, base, Bold, b.size, c.pal.OnGold)
+				c.text(sp.text, lx, base, Bold, b.size*sp.sc(), c.pal.OnGold)
 			}
 			lx += sp.w
 		}

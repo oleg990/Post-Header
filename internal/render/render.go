@@ -113,6 +113,7 @@ type Result struct {
 	Pages      []*image.RGBA
 	FellBackTo Overflow
 	BaseSize   float64
+	Inline     image.Rectangle // где на первом слайде стоит фото в посте (пусто — нет фото)
 }
 
 type Renderer struct {
@@ -320,6 +321,7 @@ func (r *Renderer) paint(o Options, res *Result, pages [][]blockOut, m metrics, 
 		}
 		if pc.inl != nil && pi == 0 {
 			c.inlinePhoto(o.Inline, margin, pc.inl.y, contentW, pc.inl.h)
+			res.Inline = image.Rect(int(margin), int(pc.inl.y), int(margin+contentW), int(pc.inl.y+pc.inl.h))
 		}
 		if framed {
 			c.postFrame(outer+8*k, top-30*k-10*k, c.W()-outer-8*k, float64(o.Format.H)-footerH+4*k)
@@ -660,7 +662,11 @@ func (r *Renderer) drawBlock(c *canvas, st Style, b blockOut, margin, y, content
 
 func (c *canvas) drawLine(l lineOut, x0, y0 float64) {
 	top := y0 + l.y
-	base := top + l.h/2 + l.size*0.36
+	big := l.big
+	if big == 0 {
+		big = 1
+	}
+	base := top + l.h/2 + l.size*big*0.36
 	x := x0 + l.x
 	switch {
 	case l.mark == "–":
@@ -673,8 +679,8 @@ func (c *canvas) drawLine(l lineOut, x0, y0 float64) {
 	for _, sp := range l.spans {
 		switch sp.kind {
 		case spEmoji:
-			es := l.size * 1.15
-			c.emojiAt(sp.emoji, x+l.size*0.04, top+l.h/2-es/2, es)
+			es := l.size * sp.sc() * 1.15
+			c.emojiAt(sp.emoji, x+l.size*sp.sc()*0.04, base-l.size*sp.sc()*0.36-es/2, es)
 		case spWord:
 			col, w := c.pal.Text, l.weight
 			if l.heading {
@@ -686,7 +692,7 @@ func (c *canvas) drawLine(l lineOut, x0, y0 float64) {
 					w = SemiBold
 				}
 			}
-			c.text(sp.text, x, base, w, l.size, col)
+			c.text(sp.text, x, base, w, l.size*sp.sc(), col)
 		}
 		x += sp.w
 	}

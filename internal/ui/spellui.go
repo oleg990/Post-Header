@@ -31,7 +31,38 @@ func (a *App) recheck() {
 		a.mistakes = nil
 		return
 	}
-	a.mistakes = a.spell.Check(a.text.Text(), 30)
+	// Метки размера {+…} убираем, чтобы «{+Д}ругим» проверялось как одно слово.
+	clean, pos := stripSizeMarks([]rune(a.text.Text()))
+	a.mistakes = a.spell.Check(string(clean), 30)
+	for i := range a.mistakes {
+		a.mistakes[i].Start = pos[a.mistakes[i].Start]
+		a.mistakes[i].End = pos[a.mistakes[i].End-1] + 1
+	}
+}
+
+// stripSizeMarks убирает «{+», «{--», «}» и возвращает, где каждая
+// оставшаяся буква стояла в исходном тексте.
+func stripSizeMarks(r []rune) ([]rune, []int) {
+	out := make([]rune, 0, len(r))
+	pos := make([]int, 0, len(r))
+	open := false
+	for i := 0; i < len(r); i++ {
+		if !open && r[i] == '{' && i+1 < len(r) && (r[i+1] == '+' || r[i+1] == '-') {
+			j := i + 1
+			for j < len(r) && r[j] == r[i+1] {
+				j++
+			}
+			i, open = j-1, true
+			continue
+		}
+		if open && r[i] == '}' {
+			open = false
+			continue
+		}
+		out = append(out, r[i])
+		pos = append(pos, i)
+	}
+	return out, pos
 }
 
 func (m *markupBar) ensureSpellButtons(n int) {

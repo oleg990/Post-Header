@@ -41,6 +41,9 @@ func (u *updater) check(a *App, manual bool) {
 			case rel != nil:
 				u.rel = rel
 				u.status = "Доступна версия " + rel.Tag
+				if !manual {
+					a.news.show(rel.Tag, rel.Notes)
+				}
 			case Version == "dev" || len(Version) > 3 && Version[:4] == "dev-":
 				u.status = "Тестовая сборка: обновления приходят только в установленную версию"
 			default:
