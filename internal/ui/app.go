@@ -46,10 +46,10 @@ type App struct {
 	mainFade   timeline
 	bg         paint.ImageOp
 
-	text, phone           widget.Editor
-	textFocus, phoneFocus ease
-	pasteBtn, clearBtn    Button
-	markup                markupBar
+	text, phone, phoneName           widget.Editor
+	textFocus, phoneFocus, nameFocus ease
+	pasteBtn, clearBtn               Button
+	markup                           markupBar
 
 	fmtBtns                                  [3]Button
 	bgBtns                                   [4]Button
@@ -60,6 +60,7 @@ type App struct {
 
 	photo     image.Image
 	photoName string
+	photoPath string
 	photoAdj  render.PhotoAdjust
 	photoMove [7]Button // ← → ↑ ↓ − + по центру
 	sharpBtns [3]Button
@@ -97,6 +98,17 @@ type App struct {
 	iconPrev, iconNext     []Button
 	zoom                   *paint.ImageOp
 	zoomBtn                widget.Clickable
+
+	textSize    float64 // 0 — подбирать самому, иначе кегль на 1080 px
+	sizeBtns    [3]Button
+	inline      render.InlinePhoto
+	inlinePath  string
+	inlineBtn   Button
+	inlinePos   [2]Button
+	inlineSizes [3]Button
+	inlineMove  [3]Button // ↑ ↓ убрать
+	history     historyPanel
+	historyBtn  Button
 }
 
 type variantCard struct {
@@ -120,6 +132,7 @@ func Run() error {
 	a.bg = paint.NewImageOp(backdrop(480, 300))
 	a.text.WrapPolicy = text.WrapWords
 	a.phone.SingleLine = true
+	a.phoneName.SingleLine = true
 	a.iconList.Axis = layout.Vertical
 	a.applyConfig()
 
@@ -173,8 +186,10 @@ func (a *App) applyConfig() {
 	a.count = c.Variants - 1
 	a.align = c.Align
 	a.phone.SetText(c.Phone)
+	a.phoneName.SetText(c.PhoneName)
 	if c.Phone == "" {
 		a.phone.SetText(c.UserPhone)
+		a.phoneName.SetText(c.UserName)
 	}
 	a.settings.address.SingleLine = true
 	a.settings.address.SetText(c.Address)
@@ -188,6 +203,9 @@ func (a *App) applyConfig() {
 	}
 	if p := os.Getenv("POSTHEADER_PHOTO"); p != "" && os.Getenv("POSTHEADER_DEMO") != "" {
 		a.loadPhoto(p)
+	}
+	if p := os.Getenv("POSTHEADER_INLINE"); p != "" && os.Getenv("POSTHEADER_DEMO") != "" {
+		a.loadInline(p)
 	}
 }
 
@@ -212,7 +230,7 @@ func (a *App) loadPhoto(path string) {
 		a.notify("Не удалось открыть фото: "+err.Error(), true)
 		return
 	}
-	a.photo, a.photoName, a.bgKind = img, filepath.Base(path), 3
+	a.photo, a.photoName, a.photoPath, a.bgKind = img, filepath.Base(path), path, 3
 	a.photoAdj = render.PhotoAdjust{}
 	a.submit()
 }
@@ -246,13 +264,16 @@ func (a *App) submit() {
 		return
 	}
 	o := render.Options{
-		Format:   render.Formats[a.format],
-		Overflow: render.Overflow(a.overflow),
-		Phone:    a.phone.Text(),
-		PhoneAt:  render.PhonePlace(a.phoneAt),
-		Brand:    render.Brand{Logo: a.logo, Address: a.cfg.Address},
-		Icons:    map[int]render.IconKind{},
-		Align:    render.Align(a.align),
+		Format:    render.Formats[a.format],
+		Overflow:  render.Overflow(a.overflow),
+		Phone:     a.phone.Text(),
+		PhoneName: strings.TrimSpace(a.phoneName.Text()),
+		PhoneAt:   render.PhonePlace(a.phoneAt),
+		Brand:     render.Brand{Logo: a.logo, Address: a.cfg.Address},
+		Icons:     map[int]render.IconKind{},
+		Align:     render.Align(a.align),
+		TextSize:  a.textSize,
+		Inline:    a.inline,
 	}
 	for k, v := range a.icons {
 		o.Icons[k] = v
@@ -276,6 +297,7 @@ func (a *App) saveConfig() {
 	a.cfg.Format, a.cfg.Background, a.cfg.Overflow = a.format, a.bgKind, a.overflow
 	a.cfg.Variants, a.cfg.PhoneAt, a.cfg.Phone = a.count+1, a.phoneAt, a.phone.Text()
 	a.cfg.Align = a.align
+	a.cfg.PhoneName = a.phoneName.Text()
 	a.cfg.Draft = a.text.Text()
 	go config.Save(a.cfg)
 }
@@ -332,6 +354,7 @@ func (a *App) frame(gtx C) {
 		paint.FillShape(gtx.Ops, alpha(cBg, 1-p), clip.Rect{Max: gtx.Constraints.Max}.Op())
 	}
 	a.layoutZoom(gtx)
+	a.history.layout(gtx, a)
 	a.settings.layout(gtx, a)
 	a.welcome.layout(gtx, a)
 }
@@ -343,6 +366,9 @@ func (a *App) setProfile(name, phone string) {
 	cur := strings.TrimSpace(a.phone.Text())
 	if cur == "" || cur == a.cfg.UserPhone {
 		a.phone.SetText(phone)
+		if n := strings.TrimSpace(a.phoneName.Text()); n == "" || n == a.cfg.UserName {
+			a.phoneName.SetText(name)
+		}
 	}
 	a.cfg.UserName, a.cfg.UserPhone = name, phone
 	a.dirty, a.dirtyAt = true, time.Now()
@@ -393,13 +419,15 @@ func (a *App) handleInput(gtx C) {
 			a.dirty, a.dirtyAt = true, gtx.Now
 		}
 	}
-	for {
-		ev, ok := a.phone.Update(gtx)
-		if !ok {
-			break
-		}
-		if _, ok := ev.(widget.ChangeEvent); ok {
-			a.dirty, a.dirtyAt = true, gtx.Now
+	for _, ed := range []*widget.Editor{&a.phone, &a.phoneName} {
+		for {
+			ev, ok := ed.Update(gtx)
+			if !ok {
+				break
+			}
+			if _, ok := ev.(widget.ChangeEvent); ok {
+				a.dirty, a.dirtyAt = true, gtx.Now
+			}
 		}
 	}
 	// Перерисовываем через 350 мс после последнего нажатия, а не на каждую букву.
@@ -507,6 +535,9 @@ func (a *App) handleInput(gtx C) {
 	if a.updatePhotoAdj(gtx) {
 		changed = true
 	}
+	if a.updateTextSize(gtx) || a.updateInline(gtx) {
+		changed = true
+	}
 	if changed {
 		a.submit()
 	}
@@ -522,12 +553,16 @@ func (a *App) handleInput(gtx C) {
 		}
 		if c.save.Clicked(gtx) {
 			a.saveVariant(v)
+			a.remember(v)
 		}
 		if c.copy.Clicked(gtx) {
 			img := v.pages[c.page]
 			go func() {
 				err := platform.CopyImage(img)
 				a.post(func() {
+					if err == nil {
+						a.remember(v)
+					}
 					if err != nil {
 						a.notify(err.Error(), true)
 					} else {
@@ -548,6 +583,9 @@ func (a *App) handleInput(gtx C) {
 		for _, v := range a.variants {
 			a.saveVariant(v)
 		}
+		if len(a.variants) > 0 {
+			a.remember(a.variants[0])
+		}
 	}
 	if a.openDirBtn.Clicked(gtx) {
 		dir := a.outDir()
@@ -559,7 +597,11 @@ func (a *App) handleInput(gtx C) {
 	}
 	if a.myPhoneBtn.Clicked(gtx) {
 		a.phone.SetText(a.cfg.UserPhone)
+		a.phoneName.SetText(a.cfg.UserName)
 		a.submit()
+	}
+	if a.historyBtn.Clicked(gtx) {
+		a.history.show(a)
 	}
 }
 
@@ -663,6 +705,11 @@ func (a *App) layoutTopBar(gtx C) D {
 					return a.profileBtn.Layout(gtx, a.th, "Сотрудник: "+a.cfg.UserName, btnChip, false)
 				})
 			}),
+			layout.Rigid(func(gtx C) D {
+				return layout.Inset{Right: 10}.Layout(gtx, func(gtx C) D {
+					return a.historyBtn.Layout(gtx, a.th, "История", btnGhost, false)
+				})
+			}),
 			layout.Rigid(func(gtx C) D { return a.settingsBtn.Layout(gtx, a.th, "Настройки", btnGhost, false) }),
 		)
 	})
@@ -707,16 +754,24 @@ func (a *App) layoutLeft(gtx C) D {
 			return card(gtx, a.th, "Телефон для этого поста", func(gtx C) D {
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 					layout.Rigid(func(gtx C) D {
-						return fieldFrame(gtx, gtx.Focused(&a.phone), &a.phoneFocus, editorStyle(a.th, &a.phone, "+7 920 000-00-00").Layout)
+						return layout.Flex{}.Layout(gtx,
+							layout.Flexed(0.45, func(gtx C) D {
+								return fieldFrame(gtx, gtx.Focused(&a.phone), &a.phoneFocus, editorStyle(a.th, &a.phone, "+7 920 000-00-00").Layout)
+							}),
+							layout.Rigid(layout.Spacer{Width: 8}.Layout),
+							layout.Flexed(0.55, func(gtx C) D {
+								return fieldFrame(gtx, gtx.Focused(&a.phoneName), &a.nameFocus, editorStyle(a.th, &a.phoneName, "Имя и фамилия").Layout)
+							}),
+						)
 					}),
 					layout.Rigid(layout.Spacer{Height: 10}.Layout),
 					layout.Rigid(func(gtx C) D {
 						return layout.Flex{Alignment: layout.Middle}.Layout(gtx,
 							layout.Rigid(func(gtx C) D {
-								return segmented(gtx, a.th, a.phoneAtBtns[:], []string{"Не показывать", "В шапке", "Внизу"}, &a.phoneAt)
+								return segmented(gtx, a.th, a.phoneAtBtns[:], []string{"Скрыть", "В шапке", "Внизу"}, &a.phoneAt)
 							}),
 							layout.Flexed(1, func(gtx C) D {
-								if a.cfg.UserPhone == "" || strings.TrimSpace(a.phone.Text()) == a.cfg.UserPhone {
+								if a.cfg.UserPhone == "" || (strings.TrimSpace(a.phone.Text()) == a.cfg.UserPhone && strings.TrimSpace(a.phoneName.Text()) == a.cfg.UserName) {
 									return D{}
 								}
 								return layout.E.Layout(gtx, func(gtx C) D { return a.myPhoneBtn.Layout(gtx, a.th, "Мой номер", btnGhost, false) })
@@ -860,6 +915,22 @@ func (a *App) layoutRight(gtx C) D {
 							}),
 						)
 					}),
+					layout.Rigid(layout.Spacer{Height: 14}.Layout),
+					layout.Rigid(func(gtx C) D {
+						return layout.Flex{}.Layout(gtx,
+							layout.Rigid(a.layoutTextSize),
+							layout.Rigid(layout.Spacer{Width: 28}.Layout),
+							layout.Rigid(func(gtx C) D {
+								return group(gtx, a.th, "Фото в посте", func(gtx C) D {
+									txt := "Добавить фото…"
+									if a.inline.Image != nil {
+										txt = "Фото: " + shorten(filepath.Base(a.inlinePath), 16) + " · сменить"
+									}
+									return a.inlineBtn.Layout(gtx, a.th, txt, btnChip, a.inline.Image != nil)
+								})
+							}),
+						)
+					}),
 				)
 			}, false)
 		}),
@@ -868,6 +939,12 @@ func (a *App) layoutRight(gtx C) D {
 				return D{}
 			}
 			return layout.Inset{Top: 10}.Layout(gtx, func(gtx C) D { return card(gtx, a.th, "", a.layoutPhotoAdj, false) })
+		}),
+		layout.Rigid(func(gtx C) D {
+			if a.inline.Image == nil {
+				return D{}
+			}
+			return layout.Inset{Top: 10}.Layout(gtx, func(gtx C) D { return card(gtx, a.th, "", a.layoutInline, false) })
 		}),
 		layout.Rigid(a.layoutLengthHint),
 		layout.Rigid(layout.Spacer{Height: 14}.Layout),
@@ -974,7 +1051,7 @@ func (a *App) layoutPhotoAdj(gtx C) D {
 // layoutLengthHint предупреждает, когда текст ужат слишком мелко
 // для телефона, и предлагает разбить его на слайды.
 func (a *App) layoutLengthHint(gtx C) D {
-	if a.overflow != 0 || len(a.variants) == 0 {
+	if a.overflow != 0 || a.textSize > 0 || len(a.variants) == 0 {
 		return D{}
 	}
 	min := 0.0

@@ -85,6 +85,18 @@ type Options struct {
 	Brand      Brand
 	Icons      map[int]IconKind // ручной выбор иконки: номер блока (с 0) → иконка
 	Align      Align            // по центру — без иконок, каждая строка по центру
+	PhoneName  string           // имя и фамилия рядом с телефоном
+	TextSize   float64          // кегль основного текста в px на 1080; 0 — подобрать самому
+	Inline     InlinePhoto      // фото внутри поста, над или под текстом
+}
+
+// InlinePhoto — фото объекта как часть поста (не фон): в скруглённой
+// золотой рамке над текстом или под ним.
+type InlinePhoto struct {
+	Image  image.Image
+	Size   int     // 0 небольшое, 1 среднее, 2 крупное
+	Bottom bool    // под текстом (иначе над)
+	Y      float64 // какую часть фото показать по высоте, -1 верх … 1 низ
 }
 
 // PhotoAdjust — как фото ложится в кадр. Нулевое значение — на весь кадр
@@ -175,6 +187,21 @@ func (r *Renderer) Render(text string, o Options) (*Result, error) {
 		avail -= 60 * k
 	}
 
+	// Фото в посте: забирает часть высоты, текст подстраивается под остаток.
+	var inl *inlineBox
+	if o.Inline.Image != nil {
+		frac := []float64{0.30, 0.40, 0.52}[clampInt(o.Inline.Size, 0, 2)]
+		ih := math.Round(avail * frac)
+		inl = &inlineBox{h: ih}
+		if o.Inline.Bottom {
+			inl.y = top + avail - ih
+		} else {
+			inl.y = top
+			top += ih + 30*k
+		}
+		avail -= ih + 30*k
+	}
+
 	// Если у всех блоков выбрано «без иконки», колонка иконок не нужна:
 	// текст встаёт на всю ширину.
 	anyIcon := false
@@ -219,6 +246,17 @@ func (r *Renderer) Render(text string, o Options) (*Result, error) {
 
 	minS, maxS, slideS := 23*k, 44*k, 34*k
 	res := &Result{FellBackTo: o.Overflow}
+	if o.TextSize > 0 {
+		// Кегль задан вручную: не влезает на один слайд — делим на слайды.
+		s := math.Max(16, math.Min(o.TextSize, 64)) * k
+		bs, m := lay(s)
+		pages := [][]blockOut{bs}
+		if stackHeight(bs, m.blockGap) > avail {
+			pages = paginate(bs, avail, m.blockGap)
+			res.FellBackTo = OverflowSlides
+		}
+		return r.paint(o, res, pages, m, paintCtx{margin, top, avail, contentW, headerBottom, footerH, ban, inl, framed, center})
+	}
 
 	// Самый крупный кегль, при котором всё влезает на одну картинку.
 	fitS := 0.0
@@ -250,6 +288,23 @@ func (r *Renderer) Render(text string, o Options) (*Result, error) {
 		bs, m = lay(slideS)
 		pages = paginate(bs, avail, m.blockGap)
 	}
+	return r.paint(o, res, pages, m, paintCtx{margin, top, avail, contentW, headerBottom, footerH, ban, inl, framed, center})
+}
+
+type inlineBox struct{ y, h float64 }
+
+type paintCtx struct {
+	margin, top, avail, contentW, headerBottom, footerH float64
+	ban                                                 *banner
+	inl                                                 *inlineBox
+	framed, center                                      bool
+}
+
+// paint рисует готовые страницы: фон, шапку, оформление стиля и текст.
+func (r *Renderer) paint(o Options, res *Result, pages [][]blockOut, m metrics, pc paintCtx) (*Result, error) {
+	k := float64(o.Format.W) / 1080
+	margin, top, avail, contentW := pc.margin, pc.top, pc.avail, pc.contentW
+	headerBottom, footerH, ban, framed, center := pc.headerBottom, pc.footerH, pc.ban, pc.framed, pc.center
 	res.BaseSize = m.s / k
 
 	for pi, page := range pages {
@@ -262,6 +317,9 @@ func (r *Renderer) Render(text string, o Options) (*Result, error) {
 		r.header(c, o, outer, headerBottom)
 		if ban != nil {
 			c.drawBanner(ban, outer, headerBottom+34*k, c.W()-2*outer)
+		}
+		if pc.inl != nil && pi == 0 {
+			c.inlinePhoto(o.Inline, margin, pc.inl.y, contentW, pc.inl.h)
 		}
 		if framed {
 			c.postFrame(outer+8*k, top-30*k-10*k, c.W()-outer-8*k, float64(o.Format.H)-footerH+4*k)
@@ -456,7 +514,7 @@ func (r *Renderer) header(c *canvas, o Options, margin, bottom float64) {
 	// на вторую строку и при необходимости чуть уменьшается.
 	phone := ""
 	if o.PhoneAt == PhoneHeader {
-		phone = FormatPhone(o.Phone)
+		phone = contactLine(o)
 	}
 	hex := 92 * k
 	gap := 24 * k
@@ -482,6 +540,9 @@ func (r *Renderer) header(c *canvas, o Options, margin, bottom float64) {
 		}
 		as -= 2 * k
 		ps = math.Min(ps, as*0.8)
+	}
+	for phone != "" && c.textWidth(phone, SemiBold, ps) > avail+hex && ps > 18*k {
+		ps -= 1 * k // имя с телефоном длиннее адреса — уменьшаем строку
 	}
 	tw := 0.0
 	for _, l := range lines {
@@ -640,9 +701,13 @@ func (r *Renderer) footer(c *canvas, o Options, margin, footerH float64, page, p
 		c.wave(H - 60*k)
 	}
 	if o.PhoneAt == PhoneFooter && o.Phone != "" {
-		ph := FormatPhone(o.Phone)
+		ph := contactLine(o)
 		fs := 38 * k
 		tw := c.textWidth(ph, Bold, fs)
+		for tw+90*k > W-2*margin && fs > 22*k {
+			fs -= 1 * k
+			tw = c.textWidth(ph, Bold, fs)
+		}
 		pw, phh := tw+90*k, 74*k
 		py := H - footerH + 18*k
 		px := (W - pw) / 2
@@ -677,6 +742,15 @@ func (c *canvas) wave(cy float64) {
 }
 
 // --- утилиты ---
+
+// contactLine — «Мария Иванова · +7 (920) 595-28-88» или только телефон.
+func contactLine(o Options) string {
+	ph := FormatPhone(o.Phone)
+	if n := strings.TrimSpace(o.PhoneName); n != "" && ph != "" {
+		return n + " · " + ph
+	}
+	return ph
+}
 
 // FormatPhone приводит российский номер к виду +7 (920) 595-28-88.
 func FormatPhone(s string) string {

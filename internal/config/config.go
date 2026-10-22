@@ -11,6 +11,7 @@ type Config struct {
 	LogoPath   string `json:"logo_path,omitempty"` // пусто — встроенный логотип «Адреса»
 	Address    string `json:"address"`
 	Phone      string `json:"phone,omitempty"`
+	PhoneName  string `json:"phone_name,omitempty"`
 	PhoneAt    int    `json:"phone_at"` // 0 нет, 1 шапка, 2 низ
 	Format     int    `json:"format"`
 	Background int    `json:"background"`
