@@ -32,9 +32,11 @@ type Config struct {
 	Align     int      `json:"align,omitempty"`      // 0 слева, 1 по центру
 
 	// Предсказание дня: на какой день открыто, какая фраза, какие уже были.
-	OracleDay  string `json:"oracle_day,omitempty"`
-	OracleIdx  int    `json:"oracle_idx,omitempty"`
-	OracleSeen []int  `json:"oracle_seen,omitempty"`
+	OracleDay   string `json:"oracle_day,omitempty"`
+	OracleIdx   int    `json:"oracle_idx,omitempty"`
+	OracleSeen  []int  `json:"oracle_seen,omitempty"`
+	OracleSign  int    `json:"oracle_sign,omitempty"`  // знак дня + 1; 0 — ещё не выбран
+	OracleTheme int    `json:"oracle_theme,omitempty"` // оформление + 1; 0 — ещё не выбрано
 }
 
 func Default() Config {

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"math"
@@ -31,18 +32,56 @@ type oracleBox struct {
 	start     time.Time
 	animating bool
 	hover     ease
+
+	// размер шрифта фразы: подбирается под место один раз
+	fitKey  string
+	fitSize unit.Sp
 }
 
-// Палитра блока.
-var (
-	oSkyTop  = rgb(0x1E1548)
-	oSkyBot  = rgb(0x08061A)
-	oLilac   = rgb(0xB9A6FF)
-	oLilacDk = rgb(0x6F5CC9)
-	oCream   = rgb(0xFFF1D6)
-	oGold    = rgb(0xF2C66D)
-	oHexFill = rgb(0x231A52)
-)
+// phraseSize — самый крупный шрифт (до 30), при котором вся фраза
+// помещается в отведённое место.
+func (o *oracleBox) phraseSize(gtx C, th *material.Theme, s string) unit.Sp {
+	key := fmt.Sprint(s, gtx.Constraints.Max)
+	if key == o.fitKey {
+		return o.fitSize
+	}
+	sz := unit.Sp(30)
+	for ; sz > 16; sz-- {
+		mg := gtx
+		mg.Constraints.Min = image.Point{}
+		mg.Constraints.Max.Y = 1 << 20
+		m := op.Record(gtx.Ops)
+		d := oracleLabel(th, sz, s, oT.cream)(mg)
+		m.Stop()
+		if d.Size.Y <= gtx.Constraints.Max.Y {
+			break
+		}
+	}
+	o.fitKey, o.fitSize = key, sz
+	return sz
+}
+
+// oracleTheme — оформление одного предсказания: небо, рамка, свечение и
+// гексагон. С каждым новым предсказанием тема меняется.
+type oracleTheme struct {
+	name                        string
+	skyTop, skyBot, mist        color.NRGBA
+	lilac, lilacDk, cream, gold color.NRGBA
+	hexFill                     color.NRGBA
+}
+
+var oracleThemes = []oracleTheme{
+	{"ночное небо", rgb(0x1E1548), rgb(0x08061A), rgb(0x2B6C8F), rgb(0xB9A6FF), rgb(0x6F5CC9), rgb(0xFFF1D6), rgb(0xF2C66D), rgb(0x231A52)},
+	{"изумруд", rgb(0x0E3B36), rgb(0x04141A), rgb(0x1F5E8C), rgb(0x8FE3CF), rgb(0x2E8C7A), rgb(0xEFFFF6), rgb(0xF2D27A), rgb(0x0F3A35)},
+	{"рассвет", rgb(0x4A1838), rgb(0x14060F), rgb(0x8F4A2B), rgb(0xFFB3C8), rgb(0xC2507A), rgb(0xFFF0E8), rgb(0xFFC98A), rgb(0x4A1A3A)},
+	{"океан", rgb(0x0D2A55), rgb(0x030A1C), rgb(0x2B8F8A), rgb(0x9CC8FF), rgb(0x3D6FC2), rgb(0xF0F6FF), rgb(0xF5D58A), rgb(0x112E5C)},
+	{"янтарь", rgb(0x3A2108), rgb(0x120903), rgb(0x8F2B3B), rgb(0xFFD59A), rgb(0xB8732E), rgb(0xFFF6E6), rgb(0xFFE08A), rgb(0x3D240C)},
+	{"лунное серебро", rgb(0x2A303D), rgb(0x0A0C10), rgb(0x4F6A9E), rgb(0xD5DCE8), rgb(0x7A8499), rgb(0xF7F9FC), rgb(0xF2D58A), rgb(0x232936)},
+	{"аметист", rgb(0x3A1450), rgb(0x0F0418), rgb(0xC94F8F), rgb(0xE0A6FF), rgb(0x9A4FC9), rgb(0xFCF0FF), rgb(0xF7CF7A), rgb(0x3A1652)},
+}
+
+// oT — тема, которой рисуется блок; выставляется в начале layoutOracle.
+var oT = oracleThemes[0]
 
 const (
 	oracleAnim = 4200 * time.Millisecond // гексагон: заряд, вращение, вспышка, знак
@@ -51,9 +90,28 @@ const (
 )
 
 // Знаки дня: выпадают вместе с фразой.
-var oracleSigns = []string{"звезда", "солнце", "луна", "сердце", "дом", "кристалл"}
+var oracleSigns = []string{"звезда", "солнце", "луна", "сердце", "дом", "кристалл", "ключ", "клевер"}
 
 func (a *App) oracleRevealed() bool { return a.cfg.OracleDay == oracle.Day(time.Now()) }
+
+// oracleLook — номер знака или темы из настроек (там хранится номер + 1);
+// если его нет (настройки старой версии) — запасной по номеру фразы.
+func (a *App) oracleLook(v, n int) int {
+	if v--; v >= 0 && v < n {
+		return v
+	}
+	return a.cfg.OracleIdx % n
+}
+
+// nextLook — случайный номер из n, но не prev: каждое предсказание
+// выглядит иначе, чем прошлое.
+func nextLook(prev, n int, r *rand.Rand) int {
+	v := r.Intn(n - 1)
+	if v >= prev {
+		v++
+	}
+	return v
+}
 
 func (a *App) updateOracle(gtx C) {
 	o := &a.oracle
@@ -62,6 +120,9 @@ func (a *App) updateOracle(gtx C) {
 			r := rand.New(rand.NewSource(time.Now().UnixNano()))
 			idx, seen := oracle.Pick(a.cfg.OracleSeen, r)
 			a.cfg.OracleDay, a.cfg.OracleIdx, a.cfg.OracleSeen = oracle.Day(time.Now()), idx, seen
+			// знак и оформление каждый раз новые
+			a.cfg.OracleSign = nextLook(a.oracleLook(a.cfg.OracleSign, len(oracleSigns)), len(oracleSigns), r) + 1
+			a.cfg.OracleTheme = nextLook(a.oracleLook(a.cfg.OracleTheme, len(oracleThemes)), len(oracleThemes), r) + 1
 			a.saveConfig()
 		}
 		o.start, o.animating = gtx.Now, true
@@ -75,6 +136,7 @@ func (a *App) layoutOracle(gtx C) D {
 		return D{}
 	}
 	a.updateOracle(gtx)
+	oT = oracleThemes[a.oracleLook(a.cfg.OracleTheme, len(oracleThemes))]
 	o := &a.oracle
 	size := gtx.Constraints.Max
 	revealed := a.oracleRevealed()
@@ -101,12 +163,12 @@ func (a *App) layoutOracle(gtx C) D {
 	// небо
 	r := image.Rectangle{Max: size}
 	rad := gtx.Dp(16)
-	fillGrad(gtx, r, rad, oSkyTop, oSkyBot)
+	fillGrad(gtx, r, rad, oT.skyTop, oT.skyBot)
 	func() {
 		defer clip.UniformRRect(r, rad).Push(gtx.Ops).Pop()
 		sky(gtx, size, el, o.animating)
 	}()
-	strokeRRect(gtx, r, rad, float32(gtx.Dp(1.2)), mix(alpha(oLilacDk, 0.7), alpha(oGold, 0.8), hv*0.6))
+	strokeRRect(gtx, r, rad, float32(gtx.Dp(1.2)), mix(alpha(oT.lilacDk, 0.7), alpha(oT.gold, 0.8), hv*0.6))
 	o.btn.Layout(gtx, func(gtx C) D {
 		defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
 		pointer.CursorPointer.Add(gtx.Ops)
@@ -118,7 +180,7 @@ func (a *App) layoutOracle(gtx C) D {
 	if m := gtx.Dp(160); s > m {
 		s = m
 	}
-	sign := a.cfg.OracleIdx % len(oracleSigns)
+	sign := a.oracleLook(a.cfg.OracleSign, len(oracleSigns))
 	func() {
 		defer clip.UniformRRect(r, rad).Push(gtx.Ops).Pop() // искры и вспышка не вылетают за рамку
 		defer op.Offset(image.Pt(gtx.Dp(14), (size.Y-s)/2)).Push(gtx.Ops).Pop()
@@ -133,14 +195,14 @@ func (a *App) layoutOracle(gtx C) D {
 	cg.Constraints = layout.Exact(image.Pt(size.X-x-gtx.Dp(16), size.Y-gtx.Dp(26)))
 	defer op.Offset(image.Pt(x, gtx.Dp(13))).Push(gtx.Ops).Pop()
 	layout.Flex{Axis: layout.Vertical}.Layout(cg,
-		layout.Rigid(oracleLabel(th, 19, "Предсказание дня", alpha(oLilac, 0.95))),
+		layout.Rigid(oracleLabel(th, 19, "Предсказание дня", alpha(oT.lilac, 0.95))),
 		layout.Flexed(1, func(gtx C) D {
 			return layout.W.Layout(gtx, func(gtx C) D {
 				if !revealed {
 					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-						layout.Rigid(oracleLabel(th, 21, "Подбросьте гексагон — он покажет знак и слово дня.", oCream)),
+						layout.Rigid(oracleLabel(th, 25, "Подбросьте гексагон — он покажет знак и слово дня.", oT.cream)),
 						layout.Rigid(layout.Spacer{Height: 6}.Layout),
-						layout.Rigid(label(th, 12.5, "Нажмите, чтобы узнать", alpha(oGold, 0.65+0.35*hv), font.Medium).Layout),
+						layout.Rigid(label(th, 12.5, "Нажмите, чтобы узнать", alpha(oT.gold, 0.65+0.35*hv), font.Medium).Layout),
 					)
 				}
 				if typed == 0 {
@@ -150,12 +212,7 @@ func (a *App) layoutOracle(gtx C) D {
 				if n > len(phrase) {
 					n = len(phrase)
 				}
-				txt := string(phrase[:n])
-				l := material.Label(th, unit.Sp(23), txt)
-				l.Font = font.Font{Typeface: "Cormorant", Style: font.Italic, Weight: font.SemiBold}
-				l.Color = oCream
-				l.MaxLines = 3
-				return l.Layout(gtx)
+				return oracleLabel(th, o.phraseSize(gtx, th, string(phrase)), string(phrase[:n]), oT.cream)(gtx)
 			})
 		}),
 		layout.Rigid(func(gtx C) D {
@@ -167,7 +224,7 @@ func (a *App) layoutOracle(gtx C) D {
 				}
 				msg = "Знак дня — " + oracleSigns[sign] + " · следующее предсказание " + when + " в 9:00"
 			}
-			return label(th, 11.5, msg, alpha(oLilac, 0.6), font.Normal).Layout(gtx)
+			return label(th, 11.5, msg, alpha(oT.lilac, 0.6), font.Normal).Layout(gtx)
 		}),
 	)
 	return D{Size: size}
@@ -195,8 +252,8 @@ func phase(T, a, b float32) float32 { return smooth((T - a) / (b - a)) }
 func sky(gtx C, size image.Point, el time.Duration, moving bool) {
 	w, h := float32(size.X), float32(size.Y)
 	k := oracleKit{gtx: gtx}
-	k.softGlow(f32.Pt(w*0.72, h*0.25), h*0.9, oLilacDk, 0.35)
-	k.softGlow(f32.Pt(w*0.92, h*0.95), h*0.7, rgb(0x2B6C8F), 0.25)
+	k.softGlow(f32.Pt(w*0.72, h*0.25), h*0.9, oT.lilacDk, 0.35)
+	k.softGlow(f32.Pt(w*0.92, h*0.95), h*0.7, oT.mist, 0.25)
 	r := rand.New(rand.NewSource(7))
 	t := el.Seconds()
 	for i := 0; i < 46; i++ {
@@ -207,7 +264,7 @@ func sky(gtx C, size image.Point, el time.Duration, moving bool) {
 		if moving {
 			a = base * (0.55 + 0.45*float32(math.Sin(t*(1.5+float64(i%5))+float64(i))))
 		}
-		k.circle(f32.Pt(x, y), rs, alpha(oCream, a))
+		k.circle(f32.Pt(x, y), rs, alpha(oT.cream, a))
 	}
 }
 
@@ -294,8 +351,8 @@ func (k oracleKit) hex(sign int, t float32) {
 	} else if k.revealed {
 		glow = 0.75 + 0.2*k.hv
 	}
-	k.softGlow(c, R*1.9, oGold, glow*0.8)
-	k.softGlow(c, R*1.5, oLilac, glow*0.5)
+	k.softGlow(c, R*1.9, oT.gold, glow*0.8)
+	k.softGlow(c, R*1.5, oT.lilac, glow*0.5)
 
 	sc := float32(1)
 	ang := float32(0)
@@ -329,9 +386,9 @@ func (k oracleKit) hex(sign int, t float32) {
 			}
 			aa := base + float64(spin)*math.Pi*4 + float64(charge)*0.8
 			p := f32.Pt(c.X+rr*float32(math.Cos(aa)), c.Y+rr*float32(math.Sin(aa)))
-			col := oGold
+			col := oT.gold
 			if i%3 == 0 {
-				col = oLilac
+				col = oT.lilac
 			}
 			k.circle(p, k.dp(1.8+float32(i%3)*0.6), alpha(col, a))
 			k.circle(p, k.dp(4.5), alpha(col, a*0.18))
@@ -343,28 +400,28 @@ func (k oracleKit) hex(sign int, t float32) {
 		for i := 4; i >= 1; i-- {
 			back := float32(i) * 0.06
 			ga := (spin - back) * math.Pi * 6
-			k.hexAt(c, R*sc, ga, sx, color.NRGBA{}, alpha(oLilac, 0.22/float32(i)), k.dp(2))
+			k.hexAt(c, R*sc, ga, sx, color.NRGBA{}, alpha(oT.lilac, 0.22/float32(i)), k.dp(2))
 		}
 	}
 
 	// гексагон
-	k.hexAt(c, R*sc, ang, sx, oHexFill, oGold, k.dp(3))
-	k.hexAt(c, R*sc*0.8, ang, sx, color.NRGBA{}, alpha(oLilac, 0.55), k.dp(1))
+	k.hexAt(c, R*sc, ang, sx, oT.hexFill, oT.gold, k.dp(3))
+	k.hexAt(c, R*sc*0.8, ang, sx, color.NRGBA{}, alpha(oT.lilac, 0.55), k.dp(1))
 	if idle && !k.revealed {
-		k.circle(c, R*0.1, alpha(oGold, 0.8))
+		k.circle(c, R*0.1, alpha(oT.gold, 0.8))
 	}
 
 	// вспышка
 	if burst > 0 && burst < 1 {
-		k.ring(c, R*(1+1.6*burst), k.dp(3*(1-burst)+0.5), alpha(oCream, 1-burst))
-		k.circle(c, R*1.1, alpha(oCream, 0.35*(1-burst)*(1-burst)))
+		k.ring(c, R*(1+1.6*burst), k.dp(3*(1-burst)+0.5), alpha(oT.cream, 1-burst))
+		k.circle(c, R*1.1, alpha(oT.cream, 0.35*(1-burst)*(1-burst)))
 	}
 
 	// знак дня
 	if reveal > 0 {
 		e := reveal
 		pop := e * (1 + 0.25*float32(math.Sin(float64(e)*math.Pi))) // с перелётом
-		k.sign(sign, c, R*0.48*pop, alpha(oGold, e))
+		k.sign(sign, c, R*0.48*pop, alpha(oT.gold, e))
 	}
 }
 
@@ -399,7 +456,7 @@ func (k oracleKit) sign(n int, c f32.Point, r float32, col color.NRGBA) {
 		}
 	case 2: // луна: круг, перекрытый кругом цвета гексагона
 		k.circle(c, r*0.8, col)
-		k.circle(f32.Pt(c.X+r*0.38, c.Y-r*0.2), r*0.7, oHexFill)
+		k.circle(f32.Pt(c.X+r*0.38, c.Y-r*0.2), r*0.7, oT.hexFill)
 	case 3: // сердце
 		var p clip.Path
 		p.Begin(k.gtx.Ops)
@@ -412,9 +469,22 @@ func (k oracleKit) sign(n int, c f32.Point, r float32, col color.NRGBA) {
 	case 4: // дом
 		k.poly([]f32.Point{{X: c.X, Y: c.Y - r}, {X: c.X + r, Y: c.Y - r*0.1}, {X: c.X - r, Y: c.Y - r*0.1}}, col)
 		k.poly([]f32.Point{{X: c.X - r*0.7, Y: c.Y - r*0.1}, {X: c.X + r*0.7, Y: c.Y - r*0.1}, {X: c.X + r*0.7, Y: c.Y + r*0.85}, {X: c.X - r*0.7, Y: c.Y + r*0.85}}, col)
-		k.poly([]f32.Point{{X: c.X - r*0.2, Y: c.Y + r*0.25}, {X: c.X + r*0.2, Y: c.Y + r*0.25}, {X: c.X + r*0.2, Y: c.Y + r*0.85}, {X: c.X - r*0.2, Y: c.Y + r*0.85}}, oHexFill)
-	default: // кристалл
+		k.poly([]f32.Point{{X: c.X - r*0.2, Y: c.Y + r*0.25}, {X: c.X + r*0.2, Y: c.Y + r*0.25}, {X: c.X + r*0.2, Y: c.Y + r*0.85}, {X: c.X - r*0.2, Y: c.Y + r*0.85}}, oT.hexFill)
+	case 5: // кристалл
 		k.poly([]f32.Point{{X: c.X - r*0.55, Y: c.Y - r*0.55}, {X: c.X + r*0.55, Y: c.Y - r*0.55}, {X: c.X + r*0.9, Y: c.Y - r*0.15}, {X: c.X, Y: c.Y + r}, {X: c.X - r*0.9, Y: c.Y - r*0.15}}, col)
-		k.poly([]f32.Point{{X: c.X - r*0.9, Y: c.Y - r*0.15}, {X: c.X + r*0.9, Y: c.Y - r*0.15}, {X: c.X, Y: c.Y + r}}, alpha(oCream, 0.25))
+		k.poly([]f32.Point{{X: c.X - r*0.9, Y: c.Y - r*0.15}, {X: c.X + r*0.9, Y: c.Y - r*0.15}, {X: c.X, Y: c.Y + r}}, alpha(oT.cream, 0.25))
+	case 6: // ключ: кольцо, стержень и бородка
+		k.ring(f32.Pt(c.X-r*0.45, c.Y), r*0.38, r*0.17, col)
+		k.poly([]f32.Point{{X: c.X - r*0.1, Y: c.Y - r*0.09}, {X: c.X + r*0.95, Y: c.Y - r*0.09}, {X: c.X + r*0.95, Y: c.Y + r*0.09}, {X: c.X - r*0.1, Y: c.Y + r*0.09}}, col)
+		for _, x := range []float32{0.55, 0.82} {
+			k.poly([]f32.Point{{X: c.X + r*x, Y: c.Y}, {X: c.X + r*(x+0.13), Y: c.Y}, {X: c.X + r*(x+0.13), Y: c.Y + r*0.4}, {X: c.X + r*x, Y: c.Y + r*0.4}}, col)
+		}
+	default: // клевер: четыре листка и стебель
+		for i := 0; i < 4; i++ {
+			a := math.Pi/4 + float64(i)*math.Pi/2
+			cs, sn := float32(math.Cos(a)), float32(math.Sin(a))
+			k.circle(f32.Pt(c.X+cs*r*0.42, c.Y-r*0.1+sn*r*0.42), r*0.36, col)
+		}
+		k.poly([]f32.Point{{X: c.X - r*0.06, Y: c.Y}, {X: c.X + r*0.06, Y: c.Y}, {X: c.X + r*0.32, Y: c.Y + r}, {X: c.X + r*0.2, Y: c.Y + r}}, col)
 	}
 }
