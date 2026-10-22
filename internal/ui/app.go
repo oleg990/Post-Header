@@ -111,7 +111,8 @@ type App struct {
 	inlineBtn   Button
 	inlinePos   [3]Button
 	inlineSizes [3]Button
-	inlineMove  [3]Button // ↑ ↓ убрать
+	inlineTune  [3][3]Button // размытие, яркость, цвет
+	inlineMove  [3]Button    // ↑ ↓ убрать
 	history     historyPanel
 	news        newsDialog
 	historyBtn  Button

@@ -94,6 +94,37 @@ func (c *canvas) drawBanner(b *banner, x, y, w float64) {
 	}
 }
 
+// tune — размытие, яркость и цвет фото в посте.
+func tune(img *image.RGBA, blur, light, col int) {
+	if div := []int{1, 5, 14}[clampInt(blur, 0, 2)]; div > 1 {
+		b := img.Bounds()
+		small := image.NewRGBA(image.Rect(0, 0, b.Dx()/div+1, b.Dy()/div+1))
+		xdraw.ApproxBiLinear.Scale(small, small.Bounds(), img, b, xdraw.Src, nil)
+		xdraw.BiLinear.Scale(img, b, small, small.Bounds(), xdraw.Src, nil)
+	}
+	mul, add := 1.0, 0.0
+	switch light {
+	case 1:
+		mul, add = 1.12, 22
+	case 2:
+		mul = 0.62
+	}
+	sat := []float64{1, 1.4, 0}[clampInt(col, 0, 2)]
+	if mul == 1 && add == 0 && sat == 1 {
+		return
+	}
+	p := img.Pix
+	for i := 0; i+3 < len(p); i += 4 {
+		r, g, b := float64(p[i]), float64(p[i+1]), float64(p[i+2])
+		y := 0.299*r + 0.587*g + 0.114*b
+		f := func(v float64) uint8 {
+			v = (y+(v-y)*sat)*mul + add
+			return uint8(math.Max(0, math.Min(255, v)))
+		}
+		p[i], p[i+1], p[i+2] = f(r), f(g), f(b)
+	}
+}
+
 func lineWidth(l []span) float64 {
 	w := 0.0
 	for _, sp := range l {
@@ -170,6 +201,7 @@ func (c *canvas) inlinePhoto(ip InlinePhoto, x, y, w, h float64, fast bool) {
 		scaler = xdraw.ApproxBiLinear
 	}
 	scaler.Scale(tmp, tmp.Bounds(), ip.Image, image.Rect(sx, sy, sx+cw, sy+ch), xdraw.Src, nil)
+	tune(tmp, ip.Blur, ip.Light, ip.Color)
 
 	// маска со скруглёнными углами
 	mask := image.NewAlpha(tmp.Bounds())

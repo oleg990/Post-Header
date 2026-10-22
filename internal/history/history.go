@@ -44,6 +44,9 @@ type Entry struct {
 	InlineOver   bool    `json:"inline_over,omitempty"`
 	InlineY      float64 `json:"inline_y,omitempty"`
 	InlineX      float64 `json:"inline_x,omitempty"`
+	InlineBlur   int     `json:"inline_blur,omitempty"`
+	InlineLight  int     `json:"inline_light,omitempty"`
+	InlineColor  int     `json:"inline_color,omitempty"`
 }
 
 // Title — первая строка текста для списка.

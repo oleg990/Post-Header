@@ -72,6 +72,7 @@ func (a *App) snapshot() history.Entry {
 	if a.inline.Image != nil {
 		e.InlinePath, e.InlineSize, e.InlineBottom, e.InlineY = a.inlinePath, a.inline.Size, a.inline.Bottom, a.inline.Y
 		e.InlineOver, e.InlineX = a.inline.Over, a.inline.X
+		e.InlineBlur, e.InlineLight, e.InlineColor = a.inline.Blur, a.inline.Light, a.inline.Color
 	}
 	return e
 }
@@ -114,7 +115,8 @@ func (a *App) restore(e history.Entry) {
 	a.inline, a.inlinePath = render.InlinePhoto{}, ""
 	if e.InlinePath != "" {
 		if img, err := decodeFile(e.InlinePath); err == nil {
-			a.inline = render.InlinePhoto{Image: limitSize(img, 2200), Size: e.InlineSize, Bottom: e.InlineBottom, Over: e.InlineOver, Y: e.InlineY, X: e.InlineX}
+			a.inline = render.InlinePhoto{Image: limitSize(img, 2200), Size: e.InlineSize, Bottom: e.InlineBottom, Over: e.InlineOver, Y: e.InlineY, X: e.InlineX,
+				Blur: e.InlineBlur, Light: e.InlineLight, Color: e.InlineColor}
 			a.inlinePath = e.InlinePath
 		} else {
 			missing = append(missing, "фото в посте")
@@ -135,14 +137,21 @@ func (h *historyPanel) update(gtx C, a *App) {
 		h.hover = make([]ease, len(h.entries))
 	}
 	for i := range h.entries {
-		if h.openBtn[i].Clicked(gtx) {
-			a.restore(h.entries[i])
-			h.open = false
+		// «Удалить» лежит внутри карточки поста, поэтому одно нажатие
+		// приходит обеим кнопкам сразу: удаление важнее открытия.
+		del, open := h.delBtn[i].Clicked(gtx), h.openBtn[i].Clicked(gtx)
+		if del {
+			es, err := history.Remove(h.entries[i].ID)
+			if err != nil {
+				a.notify("Не удалось удалить: "+err.Error(), true)
+				return
+			}
+			h.entries = es
 			return
 		}
-		if h.delBtn[i].Clicked(gtx) {
-			es, _ := history.Remove(h.entries[i].ID)
-			h.entries = es
+		if open {
+			a.restore(h.entries[i])
+			h.open = false
 			return
 		}
 	}

@@ -101,6 +101,13 @@ func (a *App) updateInline(gtx C) bool {
 			a.inline.Size = i
 		}
 	}
+	for i, v := range []*int{&a.inline.Blur, &a.inline.Light, &a.inline.Color} {
+		for j := range a.inlineTune[i] {
+			if a.inlineTune[i][j].Clicked(gtx) {
+				*v = j
+			}
+		}
+	}
 	if a.inlineMove[0].Clicked(gtx) {
 		a.inline.Y = math.Max(-1, a.inline.Y-0.25)
 	}
@@ -122,6 +129,30 @@ func (a *App) layoutInline(gtx C) D {
 	case a.inline.Bottom:
 		pos = 1
 	}
+	row1 := func(gtx C) D { return a.layoutInlineMain(gtx, pos) }
+	tune := func(title string, i int, labels []string, sel *int) layout.FlexChild {
+		return layout.Rigid(func(gtx C) D {
+			return layout.Inset{Right: 22}.Layout(gtx, func(gtx C) D {
+				return group(gtx, a.th, title, func(gtx C) D {
+					return segmented(gtx, a.th, a.inlineTune[i][:], labels, sel)
+				})
+			})
+		})
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(row1),
+		layout.Rigid(layout.Spacer{Height: 12}.Layout),
+		layout.Rigid(func(gtx C) D {
+			return layout.Flex{}.Layout(gtx,
+				tune("Размытие", 0, []string{"Чётко", "Слегка", "Сильно"}, &a.inline.Blur),
+				tune("Яркость", 1, []string{"Обычно", "Светлее", "Темнее"}, &a.inline.Light),
+				tune("Цвет", 2, []string{"Как есть", "Сочнее", "Ч/Б"}, &a.inline.Color),
+			)
+		}),
+	)
+}
+
+func (a *App) layoutInlineMain(gtx C, pos int) D {
 	return layout.Flex{Alignment: layout.End}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
 			return group(gtx, a.th, "Фото в посте", func(gtx C) D {
