@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +28,14 @@ type Release struct {
 }
 
 var client = &http.Client{Timeout: 30 * time.Second}
+
+// updateAsset — имя облегчённого установщика для этой сборки.
+func updateAsset() string {
+	if runtime.GOARCH == "386" {
+		return "PostHeader-Update-win32.exe"
+	}
+	return "PostHeader-Update-win64.exe"
+}
 
 // Check возвращает новый релиз, если он новее current, иначе nil.
 // Сборки не из релиза (dev-…) не обновляются.
@@ -65,12 +74,18 @@ func Check(current string) (*Release, error) {
 	if r.Draft || r.Pre || !Newer(r.Tag, current) {
 		return nil, nil
 	}
+	// Сначала облегчённый установщик под свою разрядность (он вдвое меньше),
+	// если его нет — полный.
+	var rel *Release
 	for _, a := range r.Assets {
-		if strings.HasPrefix(a.Name, "PostHeader-Setup") && strings.HasSuffix(a.Name, ".exe") {
-			return &Release{Tag: r.Tag, Notes: r.Body, URL: a.URL, Name: a.Name, Size: a.Size}, nil
+		if a.Name == updateAsset() || rel == nil && strings.HasPrefix(a.Name, "PostHeader-Setup") && strings.HasSuffix(a.Name, ".exe") {
+			rel = &Release{Tag: r.Tag, Notes: r.Body, URL: a.URL, Name: a.Name, Size: a.Size}
+			if a.Name == updateAsset() {
+				break
+			}
 		}
 	}
-	return nil, nil
+	return rel, nil
 }
 
 // Download сохраняет установщик во временную папку; progress получает 0..1.
