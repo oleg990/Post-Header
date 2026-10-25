@@ -1,0 +1,10 @@
+{
+  "name": "Post Header",
+  "short_name": "Post Header",
+  "description": "Посты для соцсетей в фирменном стиле «Адреса»",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0d0c0a",
+  "theme_color": "#0d0c0a",
+  "icons": [{ "src": "icon.png", "sizes": "any", "type": "image/png", "purpose": "any" }]
+}
