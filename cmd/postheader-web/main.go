@@ -11,6 +11,7 @@ import (
 	"image"
 	"image/jpeg"
 	_ "image/png"
+	"strconv"
 	"syscall/js"
 
 	"postheader/assets"
@@ -19,23 +20,24 @@ import (
 
 // params — настройки поста от страницы.
 type params struct {
-	Text      string  `json:"text"`
-	Format    int     `json:"format"`
-	Style     int     `json:"style"`
-	Bg        int     `json:"bg"` // 0 чёрный, 1 белый, 2 графит, 3 фото
-	PhotoX    float64 `json:"photoX"`
-	PhotoY    float64 `json:"photoY"`
-	PhotoZoom float64 `json:"photoZoom"`
-	Sharp     int     `json:"sharp"`
-	Light     int     `json:"light"`
-	Slides    bool    `json:"slides"`
-	Phone     string  `json:"phone"`
-	PhoneName string  `json:"phoneName"`
-	PhoneAt   int     `json:"phoneAt"` // 0 нет, 1 шапка, 2 низ
-	Align     int     `json:"align"`
-	TextSize  float64 `json:"textSize"`
-	Address   string  `json:"address"`
-	Quality   int     `json:"quality"`
+	Text      string         `json:"text"`
+	Format    int            `json:"format"`
+	Style     int            `json:"style"`
+	Bg        int            `json:"bg"` // 0 чёрный, 1 белый, 2 графит, 3 фото
+	PhotoX    float64        `json:"photoX"`
+	PhotoY    float64        `json:"photoY"`
+	PhotoZoom float64        `json:"photoZoom"`
+	Sharp     int            `json:"sharp"`
+	Light     int            `json:"light"`
+	Slides    bool           `json:"slides"`
+	Phone     string         `json:"phone"`
+	PhoneName string         `json:"phoneName"`
+	PhoneAt   int            `json:"phoneAt"` // 0 нет, 1 шапка, 2 низ
+	Align     int            `json:"align"`
+	TextSize  float64        `json:"textSize"`
+	Address   string         `json:"address"`
+	Quality   int            `json:"quality"`
+	Icons     map[string]int `json:"icons"` // ручной выбор иконки: номер блока → вид иконки
 	Inline    struct {
 		On     bool    `json:"on"`
 		Size   int     `json:"size"`
@@ -50,6 +52,7 @@ type params struct {
 }
 
 var rend *render.Renderer
+var emojiSet *render.EmojiSet
 var logo image.Image
 
 func main() {
@@ -61,12 +64,17 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	emojiSet = emoji
 	rend = render.NewRenderer(fonts, emoji)
 	logo, _, _ = image.Decode(bytes.NewReader(assets.LogoAdresa))
 
 	// phRender(paramsJSON, photoBytes|null, inlineBytes|null) → {pages: [Uint8Array…], size, error}
 	js.Global().Set("phRender", js.FuncOf(func(this js.Value, args []js.Value) any {
 		return doRender(args)
+	}))
+	// phBlocks(text) → JSON: блоки поста с автоматической иконкой и список иконок на выбор
+	js.Global().Set("phBlocks", js.FuncOf(func(this js.Value, args []js.Value) any {
+		return blocksJSON(args[0].String())
 	}))
 	js.Global().Call("phReady")
 	select {}
@@ -95,6 +103,12 @@ func doRender(args []js.Value) (out any) {
 		Align:     render.Align(clamp(p.Align, 2)),
 		TextSize:  p.TextSize,
 		Fast:      true,
+		Icons:     map[int]render.IconKind{},
+	}
+	for k, v := range p.Icons {
+		if n, err := strconv.Atoi(k); err == nil {
+			o.Icons[n] = render.IconKind(v)
+		}
 	}
 	if p.Slides {
 		o.Overflow = render.OverflowSlides
@@ -139,6 +153,29 @@ func doRender(args []js.Value) (out any) {
 	res["pages"] = pages
 	res["size"] = r.BaseSize
 	return js.ValueOf(res)
+}
+
+func blocksJSON(text string) string {
+	type blk struct {
+		Title string `json:"title"`
+		Icon  int    `json:"icon"`
+	}
+	type choice struct {
+		Kind int    `json:"kind"`
+		Name string `json:"name"`
+	}
+	out := struct {
+		Blocks  []blk    `json:"blocks"`
+		Choices []choice `json:"choices"`
+	}{Blocks: []blk{}}
+	for _, b := range render.Blocks(text, emojiSet) {
+		out.Blocks = append(out.Blocks, blk{b.Title, int(b.Icon)})
+	}
+	for _, c := range render.IconChoices {
+		out.Choices = append(out.Choices, choice{int(c.Kind), c.Name})
+	}
+	data, _ := json.Marshal(out)
+	return string(data)
 }
 
 func decode(args []js.Value, i int) image.Image {

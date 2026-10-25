@@ -66,6 +66,13 @@ input[type=range] { width: 100%; accent-color: var(--gold); }
 .post button { width: 100%; }
 .ph { aspect-ratio: 9/16; border-radius: 12px; border: 1px dashed var(--line); display: grid; place-items: center; color: var(--muted); font-size: 13px; }
 .tag { font-size: 12px; color: var(--muted); }
+.irow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.irow:first-of-type { border-top: 0; }
+.irow .ttl { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.irow .pick { display: flex; align-items: center; gap: 6px; }
+.irow .pick .nm { min-width: 104px; font-size: 14px; }
+.irow .pick .nm.manual { background: linear-gradient(#f0c77e, #d9a85c); color: var(--on-gold); border-color: transparent; font-weight: 600; }
+.irow .pick .ar { min-width: 40px; padding: 0; }
 #install { display: none; }
 footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 18px; }
 </style>
@@ -129,6 +136,13 @@ footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 1
   </div>
 </section>
 
+<details class="card" id="iconsCard" open hidden>
+  <summary>Иконки блоков</summary>
+  <div id="iconRows"></div>
+  <div class="row"><button class="mini" id="iconReset">Всё автоматически</button></div>
+  <p class="hint">Стрелками можно сменить иконку у любого блока. Золотая кнопка — иконка выбрана вручную.</p>
+</details>
+
 <details class="card">
   <summary>Фото в посте</summary>
   <div class="row"><button class="mini" id="pickIn">Добавить фото</button><button class="mini" id="rmIn" hidden>Убрать</button><span class="tag" id="inName"></span></div>
@@ -173,12 +187,13 @@ const DEFAULT = {
   text: '', format: 0, bg: 0, sharp: 0, light: 0, align: 0, slides: 0, textSize: 0,
   phone: '', phoneName: '', phoneAt: 2, address: 'мкр. Степной 18',
   photoZoom: 1, photoX: 0, photoY: 0,
-  inPlace: 0, inSize: 1, inX: 0, inY: 0, inBlur: 0, inLight: 0, inColor: 0,
+  icons: {}, inPlace: 0, inSize: 1, inX: 0, inY: 0, inBlur: 0, inLight: 0, inColor: 0,
 };
 let S = Object.assign({}, DEFAULT);
 try { Object.assign(S, JSON.parse(localStorage.getItem('ph-web') || '{}')); } catch (e) {}
 let bgPhoto = null, inPhoto = null;      // Uint8Array после уменьшения
 let autoSize = 0;                        // кегль, который подобрал движок
+let blocksInfo = null;
 let gen = 0, timer = 0, ready = false, pages = [];
 
 // ---------- сохранение настроек ----------
@@ -277,6 +292,7 @@ worker.onmessage = e => {
   const m = e.data;
   if (m.fatal) { setStatus('Не удалось загрузить движок: ' + m.fatal, true); return; }
   if (m.ready) { ready = true; setStatus(''); $('saveAll').disabled = false; changed(); return; }
+  if (m.blocks) { blocksInfo = JSON.parse(m.blocks); drawIcons(); return; }
   const g = Math.floor(m.id / 10), st = m.id % 10;
   if (g !== gen) return;                      // устаревший результат
   if (m.error) { setStatus(m.error, true); return; }
@@ -290,7 +306,7 @@ function params(style) {
     text: S.text, format: S.format, style, bg: S.bg === 3 && !bgPhoto ? 0 : S.bg,
     photoX: S.photoX, photoY: S.photoY, photoZoom: S.photoZoom, sharp: S.sharp, light: S.light,
     slides: !!S.slides, phone: S.phone, phoneName: S.phoneName.trim(), phoneAt: S.phone.trim() ? S.phoneAt : 0,
-    align: S.align, textSize: S.textSize, address: S.address, quality: 88,
+    align: S.align, textSize: S.textSize, address: S.address, quality: 88, icons: S.icons,
     inline: { on: !!inPhoto, size: S.inSize, bottom: place === 1, over: place === 2, x: S.inX, y: S.inY, blur: S.inBlur, light: S.inLight, color: S.inColor },
   };
 }
@@ -299,8 +315,10 @@ function changed() { persist(); sync(); clearTimeout(timer); timer = setTimeout(
 
 function render() {
   if (!ready) return;
+  if (!S.text.trim()) { blocksInfo = null; drawIcons(); }
   if (!S.text.trim() && !(inPhoto && S.inPlace === 2) && !(S.bg === 3 && bgPhoto)) { $('out').innerHTML = ''; pages = []; setStatus('Напишите текст, и пост появится здесь.'); return; }
   gen++; pages = [];
+  worker.postMessage({ blocks: S.text });
   setStatus('Рисую…');
   $('out').innerHTML = STYLES.map((n, i) => `<div class="post" id="p${i}"><div class="ph">${n}</div></div>`).join('');
   STYLES.forEach((_, i) => {
@@ -333,6 +351,29 @@ async function save(files) {
     const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; a.click();
   }, n * 300));
 }
+
+// ---------- иконки блоков ----------
+function curIcon(i) { return S.icons[i] !== undefined ? S.icons[i] : blocksInfo.blocks[i].icon; }
+function stepIcon(i, d) {
+  const ch = blocksInfo.choices, cur = curIcon(i);
+  let k = ch.findIndex(c => c.kind === cur);
+  k = k < 0 ? (d > 0 ? 0 : ch.length - 1) : (k + d + ch.length) % ch.length;
+  S.icons[i] = ch[k].kind; drawIcons(); changed();
+}
+function drawIcons() {
+  const card = $('iconsCard'), box = $('iconRows');
+  if (!blocksInfo || !blocksInfo.blocks.length) { card.hidden = true; box.innerHTML = ''; return; }
+  card.hidden = false;
+  const name = k => (blocksInfo.choices.find(c => c.kind === k) || { name: 'Авто' }).name;
+  box.innerHTML = blocksInfo.blocks.map((b, i) =>
+    `<div class="irow"><span class="ttl">${i + 1}. ${b.title.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</span>` +
+    `<span class="pick"><button class="ar" data-i="${i}" data-d="-1" aria-label="Назад">‹</button>` +
+    `<button class="nm${S.icons[i] !== undefined ? ' manual' : ''}" data-i="${i}" data-d="1">${name(curIcon(i))}</button>` +
+    `<button class="ar" data-i="${i}" data-d="1" aria-label="Дальше">›</button></span></div>`).join('');
+  $('iconReset').hidden = !Object.keys(S.icons).length;
+}
+$('iconRows').addEventListener('click', e => { const b = e.target.closest('button[data-i]'); if (b) stepIcon(Number(b.dataset.i), Number(b.dataset.d)); });
+$('iconReset').onclick = () => { S.icons = {}; drawIcons(); changed(); };
 
 function setStatus(t, err) { const s = $('status'); s.textContent = t; s.className = err ? 'err' : ''; }
 

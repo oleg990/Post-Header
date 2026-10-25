@@ -15,6 +15,7 @@ WebAssembly.instantiateStreaming(fetch('ph.wasm'), go.importObject)
   .catch(e => postMessage({ fatal: String(e) }));
 
 function run(m) {
+  if (m.blocks !== undefined) { postMessage({ blocks: self.phBlocks(m.blocks) }); return; }
   const t = Date.now();
   const r = self.phRender(JSON.stringify(m.params), m.photo || null, m.inline || null);
   if (r.error) { postMessage({ id: m.id, error: r.error }); return; }
