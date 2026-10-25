@@ -103,8 +103,8 @@ footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 1
 <p class="hint">Нажмите «Сохранить» под постом: откроется меню телефона, там «Сохранить изображение», VK, Telegram и другие приложения.</p>
 
 
-<section class="card">
-  <h2>Оформление</h2>
+<details class="card">
+  <summary>Оформление</summary>
   <div class="lab">Размер</div>
   <div class="chips" data-key="format">
     <button data-v="0">9:16 сторис</button><button data-v="1">4:5 пост</button><button data-v="2">1:1 квадрат</button>
@@ -134,7 +134,7 @@ footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 1
     <button class="mini" id="szUp">+ крупнее</button>
     <span class="tag" id="szVal"></span>
   </div>
-</section>
+</details>
 
 <details class="card" id="iconsCard" open hidden>
   <summary>Иконки блоков</summary>
@@ -162,7 +162,7 @@ footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 1
   </div>
 </details>
 
-<details class="card" open>
+<details class="card">
   <summary>Телефон и адрес</summary>
   <div class="two">
     <input type="tel" id="phone" placeholder="Телефон" inputmode="tel" autocomplete="tel">
