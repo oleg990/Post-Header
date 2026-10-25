@@ -378,7 +378,12 @@ $('iconReset').onclick = () => { S.icons = {}; drawIcons(); changed(); };
 function setStatus(t, err) { const s = $('status'); s.textContent = t; s.className = err ? 'err' : ''; }
 
 repaint(); sync();
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator) {
+  // новая версия страницы: один раз перезагружаемся, чтобы сразу показать её
+  const had = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (had) location.reload(); });
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
 fetch('version.txt').then(r => r.text()).then(t => $('ver').textContent = t.trim()).catch(() => {});
 </script>
 </body>
