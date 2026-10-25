@@ -36,7 +36,7 @@ jobs:
           cp -r web/. site/
           GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" -o site/ph.wasm ./cmd/postheader-web
           cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/
-          cat VERSION > site/version.txt
+          echo "$(cat VERSION) · веб ${GITHUB_SHA::7}" > site/version.txt
           ls -la site
 
       - uses: actions/configure-pages@v5
